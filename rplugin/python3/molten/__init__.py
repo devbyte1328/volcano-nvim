@@ -122,7 +122,7 @@ class Molten:
         maybe_molten = self.buffers.get(self.nvim.current.buffer.number)
         if requires_instance and (maybe_molten is None or len(maybe_molten) == 0):
             raise MoltenException(
-                "Molten is not initialized in this buffer; run `:MoltenInit` to initialize."
+                "Molten is not initialized in this buffer; run `:VolcanoInit` to initialize."
             )
         return maybe_molten
 
@@ -198,7 +198,7 @@ class Molten:
             )
 
             self.add_kernel(self.nvim.current.buffer, kernel_id, molten)
-            molten._doautocmd("MoltenInitPost")
+            molten._doautocmd("VolcanoInitPost")
             if isinstance(self.canvas, WeztermCanvas):
                 self.canvas.wezterm_split()
 
@@ -591,7 +591,7 @@ class Molten:
             self.nvim.lua._prompt_init_and_run(available_kernels + shared_kernels, PROMPT, command)
         elif not kernels:  # and auto_init_behavior == "raise"
             raise MoltenException(
-                "Molten is not initialized in this buffer; run `:MoltenInit` to initialize."
+                "Molten is not initialized in this buffer; run `:VolcanoInit` to initialize."
             )
         elif len(kernels) == 1:
             import re

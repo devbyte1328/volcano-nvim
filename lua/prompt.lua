@@ -8,7 +8,7 @@ local format_shared = function(item)
   end
 end
 
----show the MoltenInit prompt with the given kernels
+---show the VolcanoInit prompt with the given kernels
 ---started as shared kernels.
 ---@param kernels table<table> list of tuples of (str, bool)
 ---@param prompt string
@@ -23,16 +23,16 @@ M.prompt_init = function(kernels, prompt)
       end
       vim.schedule_wrap(function()
         if choice[2] then
-          vim.cmd("MoltenInit shared " .. choice[1])
+          vim.cmd("VolcanoInit shared " .. choice[1])
         else
-          vim.cmd("MoltenInit " .. choice[1])
+          vim.cmd("VolcanoInit " .. choice[1])
         end
       end)()
     end)
   end)()
 end
 
----show the MoltenInit prompt with the given kernels
+---show the VolcanoInit prompt with the given kernels
 ---started as shared kernels.
 ---@param kernels table<table> list of tuples of (str, bool)
 ---@param prompt string
@@ -48,7 +48,7 @@ M.prompt_init_and_run = function(kernels, prompt, command)
       end
       if choice[2] then
         vim.schedule_wrap(function()
-          vim.cmd("MoltenInit shared " .. choice[1])
+          vim.cmd("VolcanoInit shared " .. choice[1])
           vim.cmd(command:gsub("%%k", choice[1]))
         end)()
       else
@@ -60,7 +60,7 @@ M.prompt_init_and_run = function(kernels, prompt, command)
           end,
         })
         vim.schedule_wrap(function()
-          vim.cmd("MoltenInit " .. choice[1])
+          vim.cmd("VolcanoInit " .. choice[1])
         end)()
       end
     end) -- ui select
