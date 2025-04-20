@@ -14,6 +14,14 @@ return {
 
         -- Molten config
         vim.g.molten_output_win_max_height = 12
+
+        -- Auto-run :VolcanoInit if opening a .ipynb file
+        vim.api.nvim_create_autocmd("BufReadPost", {
+            pattern = "*.ipynb",
+            callback = function()
+                vim.cmd("VolcanoInit")
+            end,
+        })
     end,
 }
 

@@ -222,7 +222,18 @@ class Molten:
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file")  # type: ignore
     @nvimui  # type: ignore
+
     def command_init(self, args: List[str]) -> None:
+        # Only run this debug check the first time
+        if not hasattr(self, "_volcano_debug_shown"):
+            self._volcano_debug_shown = True  # set flag so it won't show again
+
+            filename = self.nvim.current.buffer.name
+            if filename.endswith(".ipynb"):
+                self.nvim.command("echo \"It's .ipynb\"")
+            else:
+                self.nvim.command("echo \"It's something else...\"")
+
         self._initialize_if_necessary()
 
         shared = False
@@ -249,7 +260,9 @@ class Molten:
                 )
                 return
 
-            self.nvim.lua._prompt_init(kernels, PROMPT)
+            # Auto-select the first kernel if available
+            chosen_kernel = kernels[0][0]  # kernels is a list of (name, is_running) tuples
+            self._initialize_buffer(chosen_kernel, shared=shared)
 
     def _deinit_buffer(self, molten_kernels: List[MoltenKernel]) -> None:
         # Have to copy this to get around reference issues
