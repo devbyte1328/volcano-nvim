@@ -220,7 +220,7 @@ class Molten:
 
         self.molten_kernels[kernel_id] = kernel
 
-    @pynvim.command("MoltenInit", nargs="*", sync=True, complete="file")  # type: ignore
+    @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file")  # type: ignore
     @nvimui  # type: ignore
     def command_init(self, args: List[str]) -> None:
         self._initialize_if_necessary()
