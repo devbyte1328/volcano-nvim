@@ -222,22 +222,22 @@ class Molten:
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file")  # type: ignore
     @nvimui  # type: ignore
 
+
+
+
+
     def command_init(self, args: List[str]) -> None:
-        # Only run this debug check the first time
         if not hasattr(self, "_volcano_debug_shown"):
-            self._volcano_debug_shown = True  # set flag so it won't show again
+            self._volcano_debug_shown = True
 
             filename = self.nvim.current.buffer.name
 
-
-
             if filename.endswith(".ipynb"):
-                # Load the notebook content
                 try:
                     with open(filename, "r", encoding="utf-8") as f:
                         nb_data = json.load(f)
 
-                    # Determine the checkpoint path
+                    # Setup checkpoint directory and file path
                     basename = os.path.basename(filename)
                     dirname = os.path.dirname(filename)
                     checkpoint_dir = os.path.join(dirname, ".ipynb_checkpoints")
@@ -245,18 +245,20 @@ class Molten:
 
                     interpreted_path = os.path.join(checkpoint_dir, f"{basename}.interpreted")
 
-                    # Save the interpreted version
-                    with open(interpreted_path, "w", encoding="utf-8") as f:
-                        json.dump(nb_data, f, indent=2)
+                    # Write as interpreted Python script
+                    with open(interpreted_path, "w", encoding="utf-8") as f_out:
+                        for cell in nb_data.get("cells", []):
+                            if cell.get("cell_type") == "code":
+                                f_out.write("# <cell>\n")
+                                source_lines = cell.get("source", [])
+                                if source_lines:
+                                    for line in source_lines:
+                                        f_out.write(line if line.endswith("\n") else line + "\n")
+                                else:
+                                    f_out.write("\n")  # empty line for empty cells
+                                f_out.write("# </cell>\n\n")
                 except Exception as e:
-                    self.nvim.command(f"echoerr 'Failed to save interpreted notebook: {e}'")
-
-
-
-
-
-
-
+                    self.nvim.command(f"echoerr 'Failed to convert notebook: {e}'")
 
         self._initialize_if_necessary()
 
@@ -274,7 +276,6 @@ class Molten:
             running_kernels = [(x, True) for x in self.molten_kernels.keys()]
 
             if shared:
-                # only show running kernels
                 available_kernels = []
 
             kernels = available_kernels + running_kernels
@@ -284,9 +285,13 @@ class Molten:
                 )
                 return
 
-            # Auto-select the first kernel if available
-            chosen_kernel = kernels[0][0]  # kernels is a list of (name, is_running) tuples
+            chosen_kernel = kernels[0][0]
             self._initialize_buffer(chosen_kernel, shared=shared)
+
+
+
+
+
 
     def _deinit_buffer(self, molten_kernels: List[MoltenKernel]) -> None:
         # Have to copy this to get around reference issues
