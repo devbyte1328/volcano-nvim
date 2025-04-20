@@ -18,7 +18,6 @@ from molten.runtime import get_available_kernels
 from molten.utils import MoltenException, notify_error, notify_info, notify_warn, nvimui
 from pynvim import Nvim
 
-
 @pynvim.plugin
 class Molten:
     """The plugin class. Provides an interface for interacting with the plugin via vim functions,
@@ -229,10 +228,35 @@ class Molten:
             self._volcano_debug_shown = True  # set flag so it won't show again
 
             filename = self.nvim.current.buffer.name
+
+
+
             if filename.endswith(".ipynb"):
-                self.nvim.command("echo \"It's .ipynb\"")
-            else:
-                self.nvim.command("echo \"It's something else...\"")
+                # Load the notebook content
+                try:
+                    with open(filename, "r", encoding="utf-8") as f:
+                        nb_data = json.load(f)
+
+                    # Determine the checkpoint path
+                    basename = os.path.basename(filename)
+                    dirname = os.path.dirname(filename)
+                    checkpoint_dir = os.path.join(dirname, ".ipynb_checkpoints")
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+
+                    interpreted_path = os.path.join(checkpoint_dir, f"{basename}.interpreted")
+
+                    # Save the interpreted version
+                    with open(interpreted_path, "w", encoding="utf-8") as f:
+                        json.dump(nb_data, f, indent=2)
+                except Exception as e:
+                    self.nvim.command(f"echoerr 'Failed to save interpreted notebook: {e}'")
+
+
+
+
+
+
+
 
         self._initialize_if_necessary()
 
