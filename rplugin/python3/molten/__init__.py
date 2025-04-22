@@ -221,11 +221,6 @@ class Molten:
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file")  # type: ignore
     @nvimui  # type: ignore
-
-
-
-
-
     def command_init(self, args: List[str]) -> None:
         if not hasattr(self, "_volcano_debug_shown"):
             self._volcano_debug_shown = True
@@ -257,6 +252,14 @@ class Molten:
                                 else:
                                     f_out.write("\n")  # empty line for empty cells
                                 f_out.write("# </cell>\n\n")
+
+                    # Verify the interpreted file exists
+                    if os.path.isfile(interpreted_path):
+                        # Switch to the interpreted file
+                        self.nvim.command(f"edit {interpreted_path}")
+                    else:
+                        self.nvim.command(f"echoerr 'Interpreted file {interpreted_path} was not created'")
+
                 except Exception as e:
                     self.nvim.command(f"echoerr 'Failed to convert notebook: {e}'")
 
