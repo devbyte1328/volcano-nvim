@@ -22,8 +22,17 @@ return {
                 vim.cmd("VolcanoInit")
             end,
         })
+
+        -- Auto-run :SaveIPYNB after saving interpreted notebook files
+        vim.api.nvim_create_autocmd("BufWritePost", {
+            pattern = "*.ipynb.interpreted",
+            callback = function()
+                vim.cmd("SaveIPYNB")
+            end,
+        })
     end,
 }
+
 
 
 
