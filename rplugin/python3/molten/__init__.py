@@ -653,18 +653,42 @@ class Molten:
         self.nvim.options["operatorfunc"] = "MoltenOperatorfunc"
         self.nvim.feedkeys("g@")
 
-    @pynvim.command("MoltenEvaluateLine", nargs="*", sync=True)  # type: ignore
-    @nvimui  # type: ignore
-    def command_evaluate_line(self, args: List[str]) -> None:
-        _, lineno, _, _, _ = self.nvim.funcs.getcurpos()
-        lineno -= 1
 
-        span = ((lineno, 0), (lineno, -1))
+
+
+    @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
+    @nvimui  # type: ignore
+    def command_volcano_evaluate(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        cur_line = self.nvim.funcs.line('.') - 1
+        total_lines = len(buf)
+
+        # Search upwards for start of cell (include the line with "# <cell>")
+        start_line = 0
+        for i in range(cur_line, -1, -1):
+            if buf[i].strip() == "# <cell>":
+                start_line = i
+                break
+
+        # Search downwards for end of cell (include the line with "# </cell>")
+        end_line = total_lines - 1
+        for i in range(cur_line, total_lines):
+            if buf[i].strip() == "# </cell>":
+                end_line = i
+                break
+
+        span = ((start_line, 0), (end_line, -1))
 
         if len(args) > 0 and args[0]:
             self._do_evaluate(args[0], span)
         else:
-            self.kernel_check("MoltenEvaluateLine %k", self.nvim.current.buffer)
+            self.kernel_check("VolcanoEvaluate %k", buf)
+
+
+
+
+
+
 
     def kernel_check(self, command: str, buffer: Buffer) -> None:
         """Figure out if there is more than one kernel attached to the given buffer. If there is,
