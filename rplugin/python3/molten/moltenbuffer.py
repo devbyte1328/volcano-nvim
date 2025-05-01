@@ -359,18 +359,10 @@ class MoltenKernel:
 
         self.updating_interface = True
         self.clear_empty_spans()
-        new_selected_cell = self._get_selected_span()
 
-        # Clear the cell we just left
-        if self.selected_cell != new_selected_cell and self.selected_cell is not None:
-            if self.selected_cell in self.outputs:
-                self.outputs[self.selected_cell].clear_float_win()
-            self.selected_cell.clear_interface(self.highlight_namespace)
+        self.selected_cell = self._get_selected_span()
 
-        if new_selected_cell is None:
-            self.should_show_floating_win = False
-
-        self.selected_cell = new_selected_cell
+        # DO NOT clear float window or hide interface
 
         if self.selected_cell is not None:
             self._show_selected(self.selected_cell)
@@ -383,25 +375,8 @@ class MoltenKernel:
 
         self.updating_interface = False
 
+
     def on_cursor_moved(self, scrolled=False) -> None:
-        new_selected_cell = self._get_selected_span()
-
-        if (
-            self.selected_cell is None
-            and new_selected_cell is not None
-            and self.options.auto_open_output
-        ):
-            self.should_show_floating_win = True
-
-        if self.selected_cell == new_selected_cell and new_selected_cell is not None:
-            if (
-                scrolled
-                and new_selected_cell.end.lineno < self.nvim.funcs.line("w$")
-                and self.should_show_floating_win
-            ):
-                self.update_interface()
-            return
-
         self.update_interface()
 
     def _show_selected(self, span: CodeCell) -> None:
@@ -446,10 +421,7 @@ class MoltenKernel:
                 span.end.colno,
             )
 
-        if self.should_show_floating_win:
-            self.outputs[span].show_floating_win(span.end)
-        else:
-            self.outputs[span].clear_float_win()
+        self.outputs[span].show_floating_win(span.end)
 
     def _get_content_checksum(self) -> str:
         return hashlib.md5(
