@@ -679,6 +679,14 @@ class Molten:
 
         span = ((start_line, 0), (end_line, -1))
 
+        # Insert "### Output" after </cell>
+        line_to_insert = "### Output"
+        target_index = end_line + 1
+        existing_lines = buf[target_index:target_index + 1]
+
+        if not existing_lines or existing_lines[0] != line_to_insert:
+            buf.api.set_lines(target_index, target_index, False, [line_to_insert])
+
         if len(args) > 0 and args[0]:
             self._do_evaluate(args[0], span)
         else:
