@@ -61,15 +61,19 @@ return {
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
                         syntax match IPYNBOutputText /.*/ contained
 
-                        highlight default link IPYNBCellTag Comment
-                        highlight default link IPYNBOutputTag Comment
-                        highlight IPYNBOutputText guifg=white ctermfg=white
+                        " Dark gray tags
+                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240
+
+                        " Bright white output content
+                        highlight IPYNBOutputText guifg=#ffffff ctermfg=231
                     ]])
                 end)
             end,
         })
     end,
 }
+
 
 
 
