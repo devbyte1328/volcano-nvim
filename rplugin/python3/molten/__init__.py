@@ -244,14 +244,14 @@ class Molten:
                     with open(interpreted_path, "w", encoding="utf-8") as f_out:
                         for cell in nb_data.get("cells", []):
                             if cell.get("cell_type") == "code":
-                                f_out.write("# <cell>\n")
+                                f_out.write("<cell>\n")
                                 source_lines = cell.get("source", [])
                                 if source_lines:
                                     for line in source_lines:
                                         f_out.write(line if line.endswith("\n") else line + "\n")
                                 else:
                                     f_out.write("\n")  # empty line for empty cells
-                                f_out.write("# </cell>\n\n")
+                                f_out.write("</cell>\n\n")
 
                     # Verify the interpreted file exists
                     if os.path.isfile(interpreted_path):
@@ -351,10 +351,10 @@ class Molten:
             in_cell = False
 
             for line in self.nvim.current.buffer:
-                if line.strip() == "# <cell>":
+                if line.strip() == "<cell>":
                     in_cell = True
                     cell_lines = []
-                elif line.strip() == "# </cell>":
+                elif line.strip() == "</cell>":
                     in_cell = False
                     # Always write as code cell
                     cells.append({
@@ -656,6 +656,7 @@ class Molten:
 
 
 
+
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_volcano_evaluate(self, args: List[str]) -> None:
@@ -663,34 +664,70 @@ class Molten:
         cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Search upwards for start of cell (include the line with "# <cell>")
+        # Search for start of cell
         start_line = 0
         for i in range(cur_line, -1, -1):
-            if buf[i].strip() == "# <cell>":
+            if buf[i].strip() == "<cell>":
                 start_line = i
                 break
 
-        # Search downwards for end of cell (include the line with "# </cell>")
+        # Search for end of cell
         end_line = total_lines - 1
         for i in range(cur_line, total_lines):
-            if buf[i].strip() == "# </cell>":
+            if buf[i].strip() == "</cell>":
                 end_line = i
                 break
 
+        # Remove existing <output> block if present
+        output_start = None
+        output_end = None
+        for i in range(end_line + 1, total_lines):
+            line = buf[i].strip()
+            if line == "<output>":
+                output_start = i
+            elif line == "</output>":
+                output_end = i
+                break
+
+        if output_start is not None and output_end is not None:
+            buf.api.set_lines(output_start, output_end + 1, False, [])
+
+        # Evaluate the code cell and capture output
         span = ((start_line, 0), (end_line, -1))
+        expr_lines = buf[start_line + 1:end_line]
+        expr = "\n".join(expr_lines)
 
-        # Insert "### Output" after </cell>
-        line_to_insert = "### Output"
-        target_index = end_line + 1
-        existing_lines = buf[target_index:target_index + 1]
+        output_lines = []
 
-        if not existing_lines or existing_lines[0] != line_to_insert:
-            buf.api.set_lines(target_index, target_index, False, [line_to_insert])
+        try:
+            import io
+            import contextlib
+            import time
 
-        if len(args) > 0 and args[0]:
-            self._do_evaluate(args[0], span)
-        else:
-            self.kernel_check("VolcanoEvaluate %k", buf)
+            output_buffer = io.StringIO()
+            start_time = time.time()
+
+            with contextlib.redirect_stdout(output_buffer):
+                exec(expr, {})
+
+            elapsed = time.time() - start_time
+            output = output_buffer.getvalue()
+            output_lines = output.strip().splitlines()
+            output_lines.insert(0, f"Done {elapsed:.1f}s")
+
+        except Exception as e:
+            output_lines = [f"Error: {e}"]
+
+        # Inject new <output> block with a blank line before it
+        insertion_index = end_line + 1
+        block = [
+            "",  # <-- this ensures a blank line between </cell> and <output>
+            "<output>",
+            *[f"{line}" for line in output_lines],
+            "</output>",
+        ]
+        buf.api.set_lines(insertion_index, insertion_index, False, block)
+
 
 
 
