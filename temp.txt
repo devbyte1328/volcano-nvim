@@ -30,8 +30,47 @@ return {
                 vim.cmd("SaveIPYNB")
             end,
         })
+
+        -- Register custom filetype
+        vim.filetype.add({
+            extension = {
+                ["ipynb.interpreted"] = "ipynb_interpreted",
+            },
+        })
+
+        -- Manually enforce filetype for backup (some systems don't detect it)
+        vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+            pattern = "*.ipynb.interpreted",
+            command = "set filetype=ipynb_interpreted",
+        })
+
+        -- Syntax highlighting for ipynb_interpreted filetype
+        vim.api.nvim_create_autocmd("FileType", {
+            pattern = "ipynb_interpreted",
+            callback = function()
+                vim.schedule(function()
+                    vim.cmd([[
+                        syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
+                        syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
+                        syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
+                        syntax match IPYNBOutputTag /^<\/output>$/ containedin=ALL
+
+                        syntax include @Python syntax/python.vim
+                        syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
+
+                        syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
+                        syntax match IPYNBOutputText /.*/ contained
+
+                        highlight default link IPYNBCellTag Comment
+                        highlight default link IPYNBOutputTag Comment
+                        highlight IPYNBOutputText guifg=white ctermfg=white
+                    ]])
+                end)
+            end,
+        })
     end,
 }
+
 
 
 

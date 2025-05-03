@@ -219,6 +219,10 @@ class Molten:
 
         self.molten_kernels[kernel_id] = kernel
 
+
+
+
+
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file")  # type: ignore
     @nvimui  # type: ignore
     def command_init(self, args: List[str]) -> None:
@@ -257,6 +261,7 @@ class Molten:
                     if os.path.isfile(interpreted_path):
                         # Switch to the interpreted file
                         self.nvim.command(f"edit {interpreted_path}")
+                        self.nvim.command("set filetype=ipynb_interpreted")
                     else:
                         self.nvim.command(f"echoerr 'Interpreted file {interpreted_path} was not created'")
 
@@ -326,56 +331,59 @@ class Molten:
 
     def _get_sorted_buf_cells(self, kernels: List[MoltenKernel], bufnr: int) -> List[CodeCell]:
         return sorted([x for x in chain(*[k.outputs.keys() for k in kernels]) if x.bufno == bufnr])
+        @pynvim.command("SaveIPYNB", nargs="*", sync=True)  # type: ignore
+        @nvimui  # type: ignore
+        def command_save_ipynb(self, args: List[str]) -> None:
+            filename = self.nvim.current.buffer.name
 
-    @pynvim.command("SaveIPYNB", nargs="*", sync=True)  # type: ignore
-    @nvimui  # type: ignore
-    def command_save_ipynb(self, args: List[str]) -> None:
-        filename = self.nvim.current.buffer.name
+            if not filename.endswith(".ipynb.interpreted"):
+                self.nvim.command("echoerr 'Not an interpreted .ipynb file'")
+                return
 
-        if not filename.endswith(".ipynb.interpreted"):
-            self.nvim.command("echoerr 'Not an interpreted .ipynb file'")
-            return
+            try:
+                # Reconstruct original .ipynb path
+                checkpoint_dir = os.path.dirname(filename)
+                basename = os.path.basename(filename).replace(".ipynb.interpreted", ".ipynb")
+                original_ipynb_path = os.path.join(os.path.dirname(checkpoint_dir), basename)
 
-        try:
-            # Reconstruct original .ipynb path
-            checkpoint_dir = os.path.dirname(filename)
-            basename = os.path.basename(filename).replace(".ipynb.interpreted", ".ipynb")
-            original_ipynb_path = os.path.join(os.path.dirname(checkpoint_dir), basename)
+                with open(original_ipynb_path, "r", encoding="utf-8") as f:
+                    nb_data = json.load(f)
 
-            with open(original_ipynb_path, "r", encoding="utf-8") as f:
-                nb_data = json.load(f)
+                # Parse buffer contents
+                cells = []
+                cell_lines = []
+                in_cell = False
 
-            # Parse buffer contents
-            cells = []
-            cell_lines = []
-            in_cell = False
+                for line in self.nvim.current.buffer:
+                    if line.strip() == "<cell>":
+                        in_cell = True
+                        cell_lines = []
+                    elif line.strip() == "</cell>":
+                        in_cell = False
+                        # Always write as code cell
+                        cells.append({
+                            "cell_type": "code",
+                            "execution_count": None,
+                            "metadata": {},
+                            "outputs": [],
+                            "source": [l for l in cell_lines]
+                        })
+                    elif in_cell:
+                        cell_lines.append(line)
 
-            for line in self.nvim.current.buffer:
-                if line.strip() == "<cell>":
-                    in_cell = True
-                    cell_lines = []
-                elif line.strip() == "</cell>":
-                    in_cell = False
-                    # Always write as code cell
-                    cells.append({
-                        "cell_type": "code",
-                        "execution_count": None,
-                        "metadata": {},
-                        "outputs": [],
-                        "source": [l for l in cell_lines]
-                    })
-                elif in_cell:
-                    cell_lines.append(line)
+                # Update and save
+                nb_data["cells"] = cells
+                with open(original_ipynb_path, "w", encoding="utf-8") as f:
+                    json.dump(nb_data, f, indent=2)
 
-            # Update and save
-            nb_data["cells"] = cells
-            with open(original_ipynb_path, "w", encoding="utf-8") as f:
-                json.dump(nb_data, f, indent=2)
+                self.nvim.command(f"echom 'Saved changes to {original_ipynb_path}'")
 
-            self.nvim.command(f"echom 'Saved changes to {original_ipynb_path}'")
+            except Exception as e:
+                self.nvim.command(f"echoerr 'Failed to save notebook: {e}'")
 
-        except Exception as e:
-            self.nvim.command(f"echoerr 'Failed to save notebook: {e}'")
+
+
+
 
     @pynvim.command("MoltenDeinit", nargs=0, sync=True)  # type: ignore
     @nvimui  # type: ignore
