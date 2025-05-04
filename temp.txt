@@ -79,6 +79,24 @@ return {
 
 
 
+vim.keymap.set("n", "<leader><CR>", function()
+  vim.cmd("VolcanoEvaluate")
+end, { desc = "Run current Jupyter cell with Volcano" })
+
+
+vim.keymap.set("n", "<A-CR>", function()
+  vim.cmd("VolcanoNewCell")
+end, { desc = "Insert new Jupyter cell", noremap = true, silent = true })
+
+
+
+
+
+
+
+
+
+
 
 
 
