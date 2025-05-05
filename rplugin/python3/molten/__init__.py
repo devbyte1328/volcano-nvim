@@ -383,57 +383,6 @@ class Molten:
 
 
 
-    @pynvim.command("VolcanoNewCell", nargs="*", sync=True)  # type: ignore
-    @nvimui  # type: ignore
-    def command_volcano_new_cell(self, args: List[str]) -> None:
-        buf = self.nvim.current.buffer
-        cur_line = self.nvim.funcs.line('.') - 1
-        total_lines = len(buf)
-
-        # Step 1: Find <cell> upwards
-        start_line = None
-        for i in range(cur_line, -1, -1):
-            if buf[i].strip() == "<cell>":
-                start_line = i
-                break
-        if start_line is None:
-            self.nvim.command("echoerr 'No <cell> tag found above cursor'")
-            return
-
-        # Step 2: Find </cell> downward
-        end_line = None
-        for i in range(start_line, total_lines):
-            if buf[i].strip() == "</cell>":
-                end_line = i
-                break
-        if end_line is None:
-            self.nvim.command("echoerr 'No </cell> tag found for the cell'")
-            return
-
-        # Step 3: Check if there's an <output> block after </cell>
-        insert_line = end_line + 1
-        for i in range(end_line + 1, total_lines):
-            if buf[i].strip() == "<output>":
-                # Look for matching </output>
-                for j in range(i + 1, total_lines):
-                    if buf[j].strip() == "</output>":
-                        insert_line = j + 1
-                        break
-                break
-
-        # Step 4: Insert a new cell after output or after </cell>
-        new_cell_block = [
-            "",
-            "<cell>",
-            "",
-            "</cell>"
-        ]
-        buf.api.set_lines(insert_line, insert_line, False, new_cell_block)
-        self.nvim.command("echom 'New cell inserted'")
-
-
-
-
 
 
     @pynvim.command("MoltenDeinit", nargs=0, sync=True)  # type: ignore
@@ -789,6 +738,35 @@ class Molten:
 
 
 
+    @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)  # type: ignore
+    @nvimui  # type: ignore
+    def command_volcano_evaluate_jump(self, args: List[str]) -> None:
+        self.command_volcano_evaluate(args)
+
+        buf = self.nvim.current.buffer
+        cur_line = self.nvim.funcs.line('.') - 1
+        total_lines = len(buf)
+
+        # Look for the next <cell> after the current </cell>
+        next_cell_line = None
+        for i in range(cur_line + 1, total_lines):
+            if buf[i].strip() == "<cell>":
+                next_cell_line = i
+                break
+
+        if next_cell_line is None:
+            # No cell found, append a new one
+            new_cell_block = [
+                "",
+                "<cell>",
+                "",
+                "</cell>"
+            ]
+            buf.api.set_lines(total_lines, total_lines, False, new_cell_block)
+            next_cell_line = total_lines + 1  # index of empty line inside new cell
+
+        # Move cursor to inside new or next cell
+        self.nvim.funcs.cursor(next_cell_line + 2, 0)
 
 
 
