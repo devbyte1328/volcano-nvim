@@ -664,32 +664,46 @@ class Molten:
 
 
 
-
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_volcano_evaluate(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
+
         cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Search for start of cell
+        # Locate <cell> start
         start_line = 0
         for i in range(cur_line, -1, -1):
             if buf[i].strip() == "<cell>":
                 start_line = i
                 break
 
-        # Search for end of cell
+        # Locate </cell> end
         end_line = total_lines - 1
         for i in range(cur_line, total_lines):
             if buf[i].strip() == "</cell>":
                 end_line = i
                 break
 
+        # Clean up anything between </cell> and the next tag (like <output> or <cell>)
+        i = end_line + 1
+        delete_to = i
+        while delete_to < len(buf):
+            line = buf[delete_to].strip()
+            if line in ("<output>", "<cell>", "</output>", "</cell>") or line != "":
+                break
+            delete_to += 1
+
+        if delete_to > i:
+            buf.api.set_lines(i, delete_to, False, [])  # remove blank lines
+
         # Remove existing <output> block if present
         output_start = None
         output_end = None
-        for i in range(end_line + 1, total_lines):
+        for i in range(end_line + 1, len(buf)):
             line = buf[i].strip()
             if line == "<output>":
                 output_start = i
@@ -699,12 +713,11 @@ class Molten:
 
         if output_start is not None and output_end is not None:
             buf.api.set_lines(output_start, output_end + 1, False, [])
+            self.nvim.command("undojoin")
 
-        # Evaluate the code cell and capture output
-        span = ((start_line, 0), (end_line, -1))
+        # Evaluate code
         expr_lines = buf[start_line + 1:end_line]
         expr = "\n".join(expr_lines)
-
         output_lines = []
 
         try:
@@ -726,15 +739,43 @@ class Molten:
         except Exception as e:
             output_lines = [f"Error: {e}"]
 
-        # Inject new <output> block with a blank line before it
+        # Insert output with exactly one blank line before it
         insertion_index = end_line + 1
         block = [
-            "",  # <-- this ensures a blank line between </cell> and <output>
+            "",  # ONE blank line before output
             "<output>",
-            *[f"{line}" for line in output_lines],
+            *output_lines,
             "</output>",
         ]
         buf.api.set_lines(insertion_index, insertion_index, False, block)
+        self.nvim.command("undojoin")
+
+        # Ensure exactly one blank line after </output>
+        output_end_line = insertion_index + len(block) - 1
+        i = output_end_line + 1
+        delete_to = i
+
+        # Remove excess blank lines
+        while delete_to < len(buf):
+            line = buf[delete_to].strip()
+            if line in ("<cell>", "<output>", "</cell>", "</output>") or line != "":
+                break
+            delete_to += 1
+        if delete_to > i:
+            buf.api.set_lines(i, delete_to, False, [])
+
+        # Insert one blank line if not already present
+        if output_end_line + 1 >= len(buf) or buf[output_end_line + 1].strip() != "":
+            buf.api.set_lines(output_end_line + 1, output_end_line + 1, False, [""])
+            self.nvim.command("undojoin")
+
+        try:
+            win.cursor = cursor_pos
+        except Exception:
+            pass
+
+
+
 
 
 
