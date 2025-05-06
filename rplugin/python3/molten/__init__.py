@@ -18,6 +18,8 @@ from molten.runtime import get_available_kernels
 from molten.utils import MoltenException, notify_error, notify_info, notify_warn, nvimui
 from pynvim import Nvim
 
+import threading
+
 @pynvim.plugin
 class Molten:
     """The plugin class. Provides an interface for interacting with the plugin via vim functions,
@@ -663,7 +665,6 @@ class Molten:
 
 
 
-
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_volcano_evaluate(self, args: List[str]) -> None:
@@ -688,7 +689,7 @@ class Molten:
                 end_line = i
                 break
 
-        # Clean up anything between </cell> and the next tag (like <output> or <cell>)
+        # Remove any blank lines after </cell>
         i = end_line + 1
         delete_to = i
         while delete_to < len(buf):
@@ -696,11 +697,10 @@ class Molten:
             if line in ("<output>", "<cell>", "</output>", "</cell>") or line != "":
                 break
             delete_to += 1
-
         if delete_to > i:
-            buf.api.set_lines(i, delete_to, False, [])  # remove blank lines
+            buf.api.set_lines(i, delete_to, False, [])
 
-        # Remove existing <output> block if present
+        # Remove existing <output> block
         output_start = None
         output_end = None
         for i in range(end_line + 1, len(buf)):
@@ -710,17 +710,14 @@ class Molten:
             elif line == "</output>":
                 output_end = i
                 break
-
         if output_start is not None and output_end is not None:
             buf.api.set_lines(output_start, output_end + 1, False, [])
             self.nvim.command("undojoin")
 
-        # Evaluate code
         expr_lines = buf[start_line + 1:end_line]
         expr = "\n".join(expr_lines)
-        output_lines = []
 
-        try:
+        def evaluate_code():
             import io
             import contextlib
             import time
@@ -728,53 +725,51 @@ class Molten:
             output_buffer = io.StringIO()
             start_time = time.time()
 
-            with contextlib.redirect_stdout(output_buffer):
-                exec(expr, {})
+            try:
+                with contextlib.redirect_stdout(output_buffer):
+                    exec(expr, {})
+                elapsed = time.time() - start_time
+                output = output_buffer.getvalue().strip()
+                output_lines = [f"Done {elapsed:.1f}s"] + output.splitlines()
+            except Exception as e:
+                output_lines = [f"Error: {e}"]
 
-            elapsed = time.time() - start_time
-            output = output_buffer.getvalue()
-            output_lines = output.strip().splitlines()
-            output_lines.insert(0, f"Done {elapsed:.1f}s")
+            # Schedule buffer update back in main thread
+            def insert_output():
+                insertion_index = end_line + 1
+                block = [
+                    "",
+                    "<output>",
+                    *output_lines,
+                    "</output>",
+                ]
+                buf.api.set_lines(insertion_index, insertion_index, False, block)
+                self.nvim.command("undojoin")
 
-        except Exception as e:
-            output_lines = [f"Error: {e}"]
+                # Clean up excess blank lines
+                output_end_line = insertion_index + len(block) - 1
+                i = output_end_line + 1
+                delete_to = i
+                while delete_to < len(buf):
+                    line = buf[delete_to].strip()
+                    if line in ("<cell>", "<output>", "</cell>", "</output>") or line != "":
+                        break
+                    delete_to += 1
+                if delete_to > i:
+                    buf.api.set_lines(i, delete_to, False, [])
+                if output_end_line + 1 >= len(buf) or buf[output_end_line + 1].strip() != "":
+                    buf.api.set_lines(output_end_line + 1, output_end_line + 1, False, [""])
+                    self.nvim.command("undojoin")
 
-        # Insert output with exactly one blank line before it
-        insertion_index = end_line + 1
-        block = [
-            "",  # ONE blank line before output
-            "<output>",
-            *output_lines,
-            "</output>",
-        ]
-        buf.api.set_lines(insertion_index, insertion_index, False, block)
-        self.nvim.command("undojoin")
+                try:
+                    win.cursor = cursor_pos
+                except Exception:
+                    pass
 
-        # Ensure exactly one blank line after </output>
-        output_end_line = insertion_index + len(block) - 1
-        i = output_end_line + 1
-        delete_to = i
+            self.nvim.async_call(insert_output)
 
-        # Remove excess blank lines
-        while delete_to < len(buf):
-            line = buf[delete_to].strip()
-            if line in ("<cell>", "<output>", "</cell>", "</output>") or line != "":
-                break
-            delete_to += 1
-        if delete_to > i:
-            buf.api.set_lines(i, delete_to, False, [])
-
-        # Insert one blank line if not already present
-        if output_end_line + 1 >= len(buf) or buf[output_end_line + 1].strip() != "":
-            buf.api.set_lines(output_end_line + 1, output_end_line + 1, False, [""])
-            self.nvim.command("undojoin")
-
-        try:
-            win.cursor = cursor_pos
-        except Exception:
-            pass
-
-
+        # Run evaluation in background thread
+        threading.Thread(target=evaluate_code, daemon=True).start()
 
 
 
