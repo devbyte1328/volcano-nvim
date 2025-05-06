@@ -718,95 +718,80 @@ class Molten:
         expr = "\n".join(expr_lines)
 
         def evaluate_code():
-            import io
-            import contextlib
             import time
+            import traceback
 
-            output_buffer = io.StringIO()
+            output_lines = []
             start_time = time.time()
 
-            try:
-                with contextlib.redirect_stdout(output_buffer):
-                    exec(expr, {})
-                elapsed = time.time() - start_time
-                output = output_buffer.getvalue().strip()
-                output_lines = [f"Done {elapsed:.1f}s"] + output.splitlines()
-            except Exception as e:
-                output_lines = [f"Error: {e}"]
-
-            # Schedule buffer update back in main thread
-            def insert_output():
-                insertion_index = end_line + 1
-                block = [
-                    "",
-                    "<output>",
-                    *output_lines,
-                    "</output>",
-                ]
-                buf.api.set_lines(insertion_index, insertion_index, False, block)
+            # Insert placeholder output
+            def insert_placeholder():
+                nonlocal end_line
+                placeholder = ["", "<output>", "[*] 0.00 seconds...", "</output>", ""]
+                buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
                 self.nvim.command("undojoin")
 
-                # Clean up excess blank lines
-                output_end_line = insertion_index + len(block) - 1
-                i = output_end_line + 1
-                delete_to = i
-                while delete_to < len(buf):
-                    line = buf[delete_to].strip()
-                    if line in ("<cell>", "<output>", "</cell>", "</output>") or line != "":
+            self.nvim.async_call(insert_placeholder)
+
+            def print_to_buffer(*args, sep=" ", end="\n"):
+                text = sep.join(str(arg) for arg in args) + end
+                output_lines.extend(text.splitlines())
+
+            try:
+                exec(expr, {"print": print_to_buffer})
+            except Exception:
+                tb = traceback.format_exc()
+                output_lines.append("Error:")
+                output_lines.extend(tb.splitlines())
+
+            elapsed = time.time() - start_time
+            result_block = [f"[Done] {elapsed:.2f} seconds..."] + output_lines
+
+            # Replace the entire output block
+            def update_output_block():
+                # Locate the <output> block
+                out_start = None
+                out_end = None
+                for i in range(end_line + 1, len(buf)):
+                    if buf[i].strip() == "<output>":
+                        out_start = i
+                    elif buf[i].strip() == "</output>":
+                        out_end = i
                         break
-                    delete_to += 1
-                if delete_to > i:
-                    buf.api.set_lines(i, delete_to, False, [])
-                if output_end_line + 1 >= len(buf) or buf[output_end_line + 1].strip() != "":
-                    buf.api.set_lines(output_end_line + 1, output_end_line + 1, False, [""])
+
+                if out_start is not None and out_end is not None:
+                    new_block = ["<output>", *result_block, "</output>", ""]
+                    buf.api.set_lines(out_start, out_end + 2, False, new_block)
                     self.nvim.command("undojoin")
 
+                # Restore cursor
                 try:
                     win.cursor = cursor_pos
                 except Exception:
                     pass
 
-            self.nvim.async_call(insert_output)
+            self.nvim.async_call(update_output_block)
+
+
+
+            start_time = time.time()
+            try:
+                exec(expr, {"print": print_to_buffer})
+                elapsed = time.time() - start_time
+                print_to_buffer(f"Done {elapsed:.1f}s")
+            except Exception as e:
+                print_to_buffer(f"Error: {e}")
+
+            # Restore cursor
+            def finish():
+                try:
+                    win.cursor = cursor_pos
+                except Exception:
+                    pass
+            self.nvim.async_call(finish)
 
         # Run evaluation in background thread
         threading.Thread(target=evaluate_code, daemon=True).start()
-
-
-
-
-    @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)  # type: ignore
-    @nvimui  # type: ignore
-    def command_volcano_evaluate_jump(self, args: List[str]) -> None:
-        self.command_volcano_evaluate(args)
-
-        buf = self.nvim.current.buffer
-        cur_line = self.nvim.funcs.line('.') - 1
-        total_lines = len(buf)
-
-        # Look for the next <cell> after the current </cell>
-        next_cell_line = None
-        for i in range(cur_line + 1, total_lines):
-            if buf[i].strip() == "<cell>":
-                next_cell_line = i
-                break
-
-        if next_cell_line is None:
-            # No cell found, append a new one
-            new_cell_block = [
-                "",
-                "<cell>",
-                "",
-                "</cell>"
-            ]
-            buf.api.set_lines(total_lines, total_lines, False, new_cell_block)
-            next_cell_line = total_lines + 1  # index of empty line inside new cell
-
-        # Move cursor to inside new or next cell
-        self.nvim.funcs.cursor(next_cell_line + 2, 0)
-
-
-
-
 
     def kernel_check(self, command: str, buffer: Buffer) -> None:
         """Figure out if there is more than one kernel attached to the given buffer. If there is,
@@ -835,6 +820,16 @@ class Molten:
             PROMPT = "Please select a kernel:"
             available_kernels = [kernel.kernel_id for kernel in kernels]
             self.nvim.lua._select_and_run(available_kernels, PROMPT, command)
+
+
+
+
+
+
+
+
+
+
 
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True)  # type: ignore
     @nvimui  # type: ignore
