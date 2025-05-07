@@ -665,6 +665,11 @@ class Molten:
 
 
 
+
+
+
+
+
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_volcano_evaluate(self, args: List[str]) -> None:
@@ -700,11 +705,14 @@ class Molten:
         if delete_to > i:
             buf.api.set_lines(i, delete_to, False, [])
 
-        # Remove existing <output> block
+
+        # Remove existing <output> block, but only up to the next <cell>
         output_start = None
         output_end = None
         for i in range(end_line + 1, len(buf)):
             line = buf[i].strip()
+            if line == "<cell>":
+                break  # Don't scan past the next cell
             if line == "<output>":
                 output_start = i
             elif line == "</output>":
@@ -713,6 +721,7 @@ class Molten:
         if output_start is not None and output_end is not None:
             buf.api.set_lines(output_start, output_end + 1, False, [])
             self.nvim.command("undojoin")
+
 
         expr_lines = buf[start_line + 1:end_line]
         expr = "\n".join(expr_lines)
