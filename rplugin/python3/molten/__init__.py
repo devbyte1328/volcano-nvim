@@ -274,17 +274,24 @@ class Molten:
                     return
 
                 # Replace output block from end_line forward
+
                 out_start = None
                 out_end = None
+                found_output = False
                 for i in range(end_line + 1, len(buf)):
-                    if buf[i].strip() == "<output>":
-                        out_start = i
-                    elif buf[i].strip() == "</output>":
-                        out_end = i
-                        break
+                    line = buf[i].strip()
+                    if not found_output:
+                        if line == "<output>":
+                            out_start = i
+                            found_output = True
+                    else:
+                        if line == "</output>":
+                            out_end = i
+                            break
+
 
                 if out_start is not None and out_end is not None:
-                    new_block = ["<output>", *result_block, "</output>", ""]
+                    new_block = ["<output>", *result_block, "</output>"]
                     buf.api.set_lines(out_start, out_end + 1, False, new_block)
                     self.nvim.command("undojoin")
 
@@ -819,7 +826,7 @@ class Molten:
             self.eval_counter += 1
 
         # Clean up any existing output immediately (to avoid overlapping)
-        placeholder = ["<output>", f"[{eval_id}][*] queue...", "</output>", ""]
+        placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
         buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
         self.nvim.command("undojoin")
 
