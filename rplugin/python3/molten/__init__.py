@@ -276,10 +276,6 @@ class Molten:
             def _do_update():
                 try:
                     buf = self.nvim.buffers[bufnr]
-                    win = next((w for w in self.nvim.windows if w.handle == win_handle), None)
-                    if not win:
-                        return
-
                     out_start, out_end = None, None
                     found_output = False
                     for i in range(end_line + 1, len(buf)):
@@ -292,21 +288,17 @@ class Molten:
                             break
 
                     if out_start is not None and out_end is not None:
-                        new_lines = lines_so_far
-                        buf.api.set_lines(out_start + 1, out_end, False, new_lines)
+                        buf.api.set_lines(out_start + 1, out_end, False, lines_so_far)
                         self.nvim.command("undojoin")
-
-                    if win:
-                        try:
-                            win.cursor = cursor_pos
-                        except Exception:
-                            pass
                 except Exception as e:
                     notify_error(self.nvim, f"Stream update error: {e}")
 
             self.nvim.async_call(_do_update)
 
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
+        last_update_time = 0
+        update_interval = 0.3  # seconds
+
         update_output_block(lines_so_far)
 
         eval_thread = threading.Thread(target=run_eval)
@@ -320,18 +312,20 @@ class Molten:
                 lines_so_far.append(item)
                 elapsed = time.time() - start_time
                 lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-                update_output_block(lines_so_far)
+                now = time.time()
+                if now - last_update_time > update_interval:
+                    update_output_block(lines_so_far)
+                    last_update_time = now
             except queue.Empty:
                 elapsed = time.time() - start_time
                 lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-                update_output_block(lines_so_far)
+                now = time.time()
+                if now - last_update_time > update_interval:
+                    update_output_block(lines_so_far)
+                    last_update_time = now
 
-        #elapsed = time.time() - start_time
-        #lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
-        #update_output_block(lines_so_far)
-
-
-
+        # Final update to ensure all output is flushed
+        update_output_block(lines_so_far)
 
 
 
