@@ -324,9 +324,10 @@ class Molten:
                     update_output_block(lines_so_far)
                     last_update_time = now
 
-        # Final update to ensure all output is flushed
+        # Final update to ensure all output is flushed and status marked as Done
+        elapsed = time.time() - start_time
+        lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
-
 
 
 
