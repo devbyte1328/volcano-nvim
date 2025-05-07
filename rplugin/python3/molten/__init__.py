@@ -19,6 +19,7 @@ from molten.utils import MoltenException, notify_error, notify_info, notify_warn
 from pynvim import Nvim
 
 import threading
+import queue
 
 @pynvim.plugin
 class Molten:
@@ -60,6 +61,9 @@ class Molten:
 
         self.eval_counter = 1
         self.eval_lock = threading.Lock()
+        self.eval_queue = queue.Queue()
+        self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
+        self.eval_thread.start()
 
     def _initialize(self) -> None:
         assert not self.initialized
@@ -223,6 +227,75 @@ class Molten:
             self.buffers[buffer.number].append(kernel)
 
         self.molten_kernels[kernel_id] = kernel
+
+    def _eval_worker(self):
+        while True:
+            item = self.eval_queue.get()
+            if item is None:
+                break  # Optional: signal to stop
+            buf, expr, start_line, end_line, eval_id, cursor_pos, win = item
+            self._evaluate_and_update(buf, expr, start_line, end_line, eval_id, cursor_pos, win)
+            self.eval_queue.task_done()
+
+
+
+    def _evaluate_and_update(
+        self,
+        buf,
+        expr,
+        start_line,
+        end_line,
+        eval_id,
+        cursor_pos,
+        win
+    ):
+        import time
+        import traceback
+
+        output_lines = []
+        start_time = time.time()
+
+        def print_to_buffer(*args, sep=" ", end="\n"):
+            text = sep.join(str(arg) for arg in args) + end
+            output_lines.extend(text.splitlines())
+
+        try:
+            exec(expr, {"print": print_to_buffer})
+        except Exception:
+            tb = traceback.format_exc()
+            output_lines.append("Error:")
+            output_lines.extend(tb.splitlines())
+
+        elapsed = time.time() - start_time
+        result_block = [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
+
+        def update_output_block():
+            out_start = None
+            out_end = None
+            for i in range(end_line + 1, len(buf)):
+                if buf[i].strip() == "<output>":
+                    out_start = i
+                elif buf[i].strip() == "</output>":
+                    out_end = i
+                    break
+
+            if out_start is not None and out_end is not None:
+                new_block = ["<output>", *result_block, "</output>", ""]
+                buf.api.set_lines(out_start, out_end + 1, False, new_block)
+                self.nvim.command("undojoin")
+
+            try:
+                win.cursor = cursor_pos
+            except Exception:
+                pass
+
+        self.nvim.async_call(update_output_block)
+
+
+
+
+
+
 
 
 
@@ -673,6 +746,14 @@ class Molten:
 
 
 
+
+
+
+
+
+
+
+
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_volcano_evaluate(self, args: List[str]) -> None:
@@ -708,14 +789,13 @@ class Molten:
         if delete_to > i:
             buf.api.set_lines(i, delete_to, False, [])
 
-
         # Remove existing <output> block, but only up to the next <cell>
         output_start = None
         output_end = None
         for i in range(end_line + 1, len(buf)):
             line = buf[i].strip()
             if line == "<cell>":
-                break  # Don't scan past the next cell
+                break
             if line == "<output>":
                 output_start = i
             elif line == "</output>":
@@ -725,124 +805,32 @@ class Molten:
             buf.api.set_lines(output_start, output_end + 1, False, [])
             self.nvim.command("undojoin")
 
-
         expr_lines = buf[start_line + 1:end_line]
         expr = "\n".join(expr_lines)
 
-        def evaluate_code():
-            import time
-            import traceback
+        with self.eval_lock:
+            eval_id = self.eval_counter
+            self.eval_counter += 1
 
-            output_lines = []
-            start_time = time.time()
+        # Show [n][*] queue... placeholder immediately
+        def insert_queued_placeholder():
+            nonlocal end_line
+            placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
+            buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+            self.nvim.command("undojoin")
 
-            with self.eval_lock:
-                eval_id = self.eval_counter
-                self.eval_counter += 1
+        self.nvim.async_call(insert_queued_placeholder)
 
-
-            # Insert placeholder output
-            def insert_placeholder():
-                nonlocal end_line
-                placeholder = ["", "<output>", f"[{eval_id}][*] 0.00 seconds...", "</output>", ""]
-                buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
-                self.nvim.command("undojoin")
-
-            self.nvim.async_call(insert_placeholder)
-
-            def print_to_buffer(*args, sep=" ", end="\n"):
-                text = sep.join(str(arg) for arg in args) + end
-                output_lines.extend(text.splitlines())
-
-            try:
-                exec(expr, {"print": print_to_buffer})
-            except Exception:
-                tb = traceback.format_exc()
-                output_lines.append("Error:")
-                output_lines.extend(tb.splitlines())
-
-            elapsed = time.time() - start_time
-            result_block = [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
-            def update_output_block():
-                out_start = None
-                out_end = None
-                for i in range(end_line + 1, len(buf)):
-                    if buf[i].strip() == "<output>":
-                        out_start = i
-                    elif buf[i].strip() == "</output>":
-                        out_end = i
-                        break
-
-                if out_start is not None and out_end is not None:
-                    # Remove all lines after </output> that are empty
-                    post_output_index = out_end + 1
-                    delete_to = post_output_index
-                    while delete_to < len(buf) and buf[delete_to].strip() == "":
-                        delete_to += 1
-                    if delete_to > post_output_index:
-                        buf.api.set_lines(post_output_index, delete_to, False, [])
-
-                    # Always insert exactly one blank line after </output>
-                    new_block = ["<output>", *result_block, "</output>", ""]
-                    buf.api.set_lines(out_start, out_end + 1, False, new_block)
-                    self.nvim.command("undojoin")
-
-                # Restore cursor
-                try:
-                    win.cursor = cursor_pos
-                except Exception:
-                    pass
-
-            self.nvim.async_call(update_output_block)
+        # Queue the evaluation
+        self.eval_queue.put((buf, expr, start_line, end_line, eval_id, cursor_pos, win))
 
 
 
-            start_time = time.time()
-            try:
-                exec(expr, {"print": print_to_buffer})
-                elapsed = time.time() - start_time
-                print_to_buffer(f"Done {elapsed:.1f}s")
-            except Exception as e:
-                print_to_buffer(f"Error: {e}")
 
-            # Restore cursor
-            def finish():
-                try:
-                    win.cursor = cursor_pos
-                except Exception:
-                    pass
-            self.nvim.async_call(finish)
 
-        # Run evaluation in background thread
-        threading.Thread(target=evaluate_code, daemon=True).start()
 
-    def kernel_check(self, command: str, buffer: Buffer) -> None:
-        """Figure out if there is more than one kernel attached to the given buffer. If there is,
-        prompt the user for the kernel name, and run the given command with the new kernel subbed in
-        for %k. If there is no kernel, throw an error. If there is one kernel, use it
-        """
-        self._initialize_if_necessary()
 
-        kernels = self.buffers.get(buffer.number)
-        if not kernels and self.options.auto_init_behavior != "raise":
-            available_kernels = [(x, False) for x in get_available_kernels()]
-            shared_kernels = [(x, True) for x in self.molten_kernels.keys()]
-            PROMPT = "You Need to Initialize a Kernel First:"
-            self.nvim.lua._prompt_init_and_run(available_kernels + shared_kernels, PROMPT, command)
-        elif not kernels:  # and auto_init_behavior == "raise"
-            raise MoltenException(
-                "Molten is not initialized in this buffer; run `:VolcanoInit` to initialize."
-            )
-        elif len(kernels) == 1:
-            import re
-            pat = r'(^|[^\\])%k'
-            c = re.sub(pat, lambda x: x[1] + kernels[0].kernel_id, command)
-            c = c.replace(r"\%k", "%k") # un-escape escaped chars
-            self.nvim.command(c)
-        else:
-            PROMPT = "Please select a kernel:"
-            available_kernels = [kernel.kernel_id for kernel in kernels]
-            self.nvim.lua._select_and_run(available_kernels, PROMPT, command)
+
 
 
 
