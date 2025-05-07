@@ -58,6 +58,9 @@ class Molten:
         self.input_timer = None
         self.molten_kernels = {}
 
+        self.eval_counter = 1
+        self.eval_lock = threading.Lock()
+
     def _initialize(self) -> None:
         assert not self.initialized
 
@@ -733,10 +736,15 @@ class Molten:
             output_lines = []
             start_time = time.time()
 
+            with self.eval_lock:
+                eval_id = self.eval_counter
+                self.eval_counter += 1
+
+
             # Insert placeholder output
             def insert_placeholder():
                 nonlocal end_line
-                placeholder = ["", "<output>", "[*] 0.00 seconds...", "</output>", ""]
+                placeholder = ["", "<output>", f"[{eval_id}][*] 0.00 seconds...", "</output>", ""]
                 buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
                 self.nvim.command("undojoin")
 
@@ -754,8 +762,7 @@ class Molten:
                 output_lines.extend(tb.splitlines())
 
             elapsed = time.time() - start_time
-            result_block = [f"[Done] {elapsed:.2f} seconds..."] + output_lines
-
+            result_block = [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
             # Replace the entire output block
             def update_output_block():
                 # Locate the <output> block
