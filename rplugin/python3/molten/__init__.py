@@ -242,69 +242,101 @@ class Molten:
 
 
 
+
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle):
         import time
+        import sys
         import traceback
 
-        def run_eval():
-            output_lines = []
-            start_time = time.time()
+        output_queue = queue.Queue()
+        start_time = time.time()
 
-            def print_to_buffer(*args, sep=" ", end="\n"):
-                text = sep.join(str(arg) for arg in args) + end
-                output_lines.extend(text.splitlines())
+        class StreamingStdout:
+            def write(self, text):
+                for line in text.rstrip().splitlines():
+                    output_queue.put(line)
+            def flush(self): pass
+
+        def run_eval():
+            local_stdout = sys.stdout
+            sys.stdout = StreamingStdout()
 
             try:
-                exec(expr, {"print": print_to_buffer})
+                exec(expr, {})
             except Exception:
                 tb = traceback.format_exc()
-                output_lines.append("Error:")
-                output_lines.extend(tb.splitlines())
+                output_queue.put("Error:")
+                for line in tb.strip().splitlines():
+                    output_queue.put(line)
+            finally:
+                sys.stdout = local_stdout
+                output_queue.put(None)
 
-            elapsed = time.time() - start_time
-            return [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
+        def update_output_block(lines_so_far):
+            def _do_update():
+                try:
+                    buf = self.nvim.buffers[bufnr]
+                    win = next((w for w in self.nvim.windows if w.handle == win_handle), None)
+                    if not win:
+                        return
 
-        result_block = run_eval()
-
-        def update_output():
-            try:
-                buf = self.nvim.buffers[bufnr]
-                win = next((w for w in self.nvim.windows if w.handle == win_handle), None)
-                if win is None:
-                    return
-
-                # Replace output block from end_line forward
-
-                out_start = None
-                out_end = None
-                found_output = False
-                for i in range(end_line + 1, len(buf)):
-                    line = buf[i].strip()
-                    if not found_output:
-                        if line == "<output>":
+                    out_start, out_end = None, None
+                    found_output = False
+                    for i in range(end_line + 1, len(buf)):
+                        line = buf[i].strip()
+                        if not found_output and line == "<output>":
                             out_start = i
                             found_output = True
-                    else:
-                        if line == "</output>":
+                        elif found_output and line == "</output>":
                             out_end = i
                             break
 
+                    if out_start is not None and out_end is not None:
+                        new_lines = lines_so_far
+                        buf.api.set_lines(out_start + 1, out_end, False, new_lines)
+                        self.nvim.command("undojoin")
 
-                if out_start is not None and out_end is not None:
-                    new_block = ["<output>", *result_block, "</output>"]
-                    buf.api.set_lines(out_start, out_end + 1, False, new_block)
-                    self.nvim.command("undojoin")
+                    if win:
+                        try:
+                            win.cursor = cursor_pos
+                        except Exception:
+                            pass
+                except Exception as e:
+                    notify_error(self.nvim, f"Stream update error: {e}")
 
-                if win:
-                    try:
-                        win.cursor = cursor_pos
-                    except Exception:
-                        pass
+            self.nvim.async_call(_do_update)
 
-            except Exception as e:
-                notify_error(self.nvim, f"Eval update error: {e}")
+        lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
+        update_output_block(lines_so_far)
 
-        self.nvim.async_call(update_output)
+        eval_thread = threading.Thread(target=run_eval)
+        eval_thread.start()
+
+        while True:
+            try:
+                item = output_queue.get(timeout=0.01)
+                if item is None:
+                    break
+                lines_so_far.append(item)
+                elapsed = time.time() - start_time
+                lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
+                update_output_block(lines_so_far)
+            except queue.Empty:
+                elapsed = time.time() - start_time
+                lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
+                update_output_block(lines_so_far)
+
+        #elapsed = time.time() - start_time
+        #lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+        #update_output_block(lines_so_far)
+
+
+
+
+
+
+
+
 
 
 
