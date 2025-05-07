@@ -228,70 +228,76 @@ class Molten:
 
         self.molten_kernels[kernel_id] = kernel
 
+
     def _eval_worker(self):
         while True:
             item = self.eval_queue.get()
             if item is None:
-                break  # Optional: signal to stop
-            buf, expr, start_line, end_line, eval_id, cursor_pos, win = item
-            self._evaluate_and_update(buf, expr, start_line, end_line, eval_id, cursor_pos, win)
+                break  # Optional shutdown
+            self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
 
 
-    def _evaluate_and_update(
-        self,
-        buf,
-        expr,
-        start_line,
-        end_line,
-        eval_id,
-        cursor_pos,
-        win
-    ):
+
+
+
+    def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle):
         import time
         import traceback
 
-        output_lines = []
-        start_time = time.time()
+        def run_eval():
+            output_lines = []
+            start_time = time.time()
 
-        def print_to_buffer(*args, sep=" ", end="\n"):
-            text = sep.join(str(arg) for arg in args) + end
-            output_lines.extend(text.splitlines())
-
-        try:
-            exec(expr, {"print": print_to_buffer})
-        except Exception:
-            tb = traceback.format_exc()
-            output_lines.append("Error:")
-            output_lines.extend(tb.splitlines())
-
-        elapsed = time.time() - start_time
-        result_block = [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
-
-        def update_output_block():
-            out_start = None
-            out_end = None
-            for i in range(end_line + 1, len(buf)):
-                if buf[i].strip() == "<output>":
-                    out_start = i
-                elif buf[i].strip() == "</output>":
-                    out_end = i
-                    break
-
-            if out_start is not None and out_end is not None:
-                new_block = ["<output>", *result_block, "</output>", ""]
-                buf.api.set_lines(out_start, out_end + 1, False, new_block)
-                self.nvim.command("undojoin")
+            def print_to_buffer(*args, sep=" ", end="\n"):
+                text = sep.join(str(arg) for arg in args) + end
+                output_lines.extend(text.splitlines())
 
             try:
-                win.cursor = cursor_pos
+                exec(expr, {"print": print_to_buffer})
             except Exception:
-                pass
+                tb = traceback.format_exc()
+                output_lines.append("Error:")
+                output_lines.extend(tb.splitlines())
 
-        self.nvim.async_call(update_output_block)
+            elapsed = time.time() - start_time
+            return [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
 
+        result_block = run_eval()
 
+        def update_output():
+            try:
+                buf = self.nvim.buffers[bufnr]
+                win = next((w for w in self.nvim.windows if w.handle == win_handle), None)
+                if win is None:
+                    return
+
+                # Replace output block from end_line forward
+                out_start = None
+                out_end = None
+                for i in range(end_line + 1, len(buf)):
+                    if buf[i].strip() == "<output>":
+                        out_start = i
+                    elif buf[i].strip() == "</output>":
+                        out_end = i
+                        break
+
+                if out_start is not None and out_end is not None:
+                    new_block = ["<output>", *result_block, "</output>", ""]
+                    buf.api.set_lines(out_start, out_end + 1, False, new_block)
+                    self.nvim.command("undojoin")
+
+                if win:
+                    try:
+                        win.cursor = cursor_pos
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                notify_error(self.nvim, f"Eval update error: {e}")
+
+        self.nvim.async_call(update_output)
 
 
 
@@ -812,17 +818,21 @@ class Molten:
             eval_id = self.eval_counter
             self.eval_counter += 1
 
-        # Show [n][*] queue... placeholder immediately
-        def insert_queued_placeholder():
-            nonlocal end_line
-            placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
-            buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
-            self.nvim.command("undojoin")
+        # Clean up any existing output immediately (to avoid overlapping)
+        placeholder = ["<output>", f"[{eval_id}][*] queue...", "</output>", ""]
+        buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+        self.nvim.command("undojoin")
 
-        self.nvim.async_call(insert_queued_placeholder)
-
-        # Queue the evaluation
-        self.eval_queue.put((buf, expr, start_line, end_line, eval_id, cursor_pos, win))
+        # Queue with frozen values (only primitives)
+        self.eval_queue.put({
+            "bufnr": buf.number,
+            "expr": expr,
+            "start_line": start_line,
+            "end_line": end_line,
+            "eval_id": eval_id,
+            "cursor_pos": cursor_pos,
+            "win_handle": win.handle,
+        })
 
 
 
