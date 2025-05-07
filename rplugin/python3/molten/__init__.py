@@ -763,9 +763,7 @@ class Molten:
 
             elapsed = time.time() - start_time
             result_block = [f"[{eval_id}][Done] {elapsed:.2f} seconds..."] + output_lines
-            # Replace the entire output block
             def update_output_block():
-                # Locate the <output> block
                 out_start = None
                 out_end = None
                 for i in range(end_line + 1, len(buf)):
@@ -776,8 +774,17 @@ class Molten:
                         break
 
                 if out_start is not None and out_end is not None:
+                    # Remove all lines after </output> that are empty
+                    post_output_index = out_end + 1
+                    delete_to = post_output_index
+                    while delete_to < len(buf) and buf[delete_to].strip() == "":
+                        delete_to += 1
+                    if delete_to > post_output_index:
+                        buf.api.set_lines(post_output_index, delete_to, False, [])
+
+                    # Always insert exactly one blank line after </output>
                     new_block = ["<output>", *result_block, "</output>", ""]
-                    buf.api.set_lines(out_start, out_end + 2, False, new_block)
+                    buf.api.set_lines(out_start, out_end + 1, False, new_block)
                     self.nvim.command("undojoin")
 
                 # Restore cursor
