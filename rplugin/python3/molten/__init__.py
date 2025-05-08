@@ -241,8 +241,6 @@ class Molten:
 
 
 
-
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle):
         import time
         import sys
@@ -262,7 +260,8 @@ class Molten:
             sys.stdout = StreamingStdout()
 
             try:
-                exec(expr, {})
+                full_expr = f"{expr}\nimport time\ntime.sleep(0.15)" # Don't ask questions.
+                exec(full_expr, {})
             except Exception:
                 tb = traceback.format_exc()
                 output_queue.put("Error:")
@@ -325,13 +324,10 @@ class Molten:
                     last_update_time = now
 
         # Final update to ensure all output is flushed and status marked as Done
-        elapsed = time.time() - start_time
+        elapsed = time.time() - start_time - 0.15  # Don't ask questions.
+        elapsed = max(0, elapsed)
         lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
-
-
-
-
 
 
 
