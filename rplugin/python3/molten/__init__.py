@@ -838,6 +838,9 @@ class Molten:
                 output_end = i
                 break
         if output_start is not None and output_end is not None:
+            # Also remove the blank line *after* </output>, if it exists
+            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
+                output_end += 1
             buf.api.set_lines(output_start, output_end + 1, False, [])
             self.nvim.command("undojoin")
 
