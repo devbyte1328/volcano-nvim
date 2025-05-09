@@ -18,6 +18,10 @@ from molten.runtime import get_available_kernels
 from molten.utils import MoltenException, notify_error, notify_info, notify_warn, nvimui
 from pynvim import Nvim
 
+import time
+import sys
+import traceback
+
 import threading
 import queue
 
@@ -297,10 +301,6 @@ class Molten:
 
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle):
-        import time
-        import sys
-        import traceback
-
         output_queue = queue.Queue()
         start_time = time.time()
 
@@ -945,6 +945,57 @@ class Molten:
             win.cursor = (insert_line + 1 + 1, 0)  # One past <cell> = inside the block
 
         self.nvim.async_call(_move_cursor_after_output)
+
+
+
+
+
+
+
+
+
+
+
+    @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_evaluate_above(self, args: List[str]) -> None:
+        import threading
+        import time
+
+        win = self.nvim.current.window
+        buf = self.nvim.current.buffer
+        total_lines = len(buf)
+
+        # Record original position
+        original_cursor = win.cursor
+        original_line = original_cursor[0] - 1  # Convert to 0-based
+
+        # Gather all <cell> blocks that start before or contain the original line
+        cell_positions = []
+        i = 0
+        while i < total_lines:
+            if buf[i].strip() == "<cell>":
+                start = i
+                i += 1
+                while i < total_lines and buf[i].strip() != "</cell>":
+                    i += 1
+                if i < total_lines and buf[i].strip() == "</cell>":
+                    end = i
+                    if start <= original_line:
+                        cell_positions.append(start)
+            i += 1
+
+        def move_through_cells():
+            for cell_start in cell_positions:
+                def move_cursor(start=cell_start):
+                    win.cursor = (start + 1, 0)
+                self.nvim.async_call(move_cursor)
+                time.sleep(5)  # Pause 5 seconds
+
+        thread = threading.Thread(target=move_through_cells, daemon=True)
+        thread.start()
+
+
 
 
 
