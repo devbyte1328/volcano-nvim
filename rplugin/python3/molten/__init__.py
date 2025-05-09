@@ -235,7 +235,43 @@ class Molten:
         self.molten_kernels[kernel_id] = kernel
 
 
-    def _evaluate_cell(self, buf, win, start_line, end_line, expr, eval_id, cursor_pos):
+    def _evaluate_cell(self):
+
+        buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
+        cur_line = self.nvim.funcs.line('.') - 1
+        total_lines = len(buf)
+
+        # Find cell block containing cursor
+        active_block = None
+        for i in range(total_lines):
+            if buf[i].strip() == "<cell>":
+                start = i
+                i += 1
+                while i < total_lines and buf[i].strip() != "</cell>":
+                    i += 1
+                if i < total_lines and buf[i].strip() == "</cell>":
+                    end = i
+                    if start <= cur_line <= end:
+                        active_block = (start, end)
+                        break
+
+        if not active_block:
+            return
+
+        start_line, end_line = active_block
+        expr_lines = buf[start_line + 1:end_line]
+        expr = "\n".join(expr_lines).strip()
+
+        if not expr:
+            return  # Empty cell, skip evaluation
+
+        with self.eval_lock:
+            eval_id = self.eval_counter
+            self.eval_counter += 1
+
+
         # Skip evaluation if expr is empty or only whitespace
         if not expr.strip():
             return
@@ -843,41 +879,7 @@ class Molten:
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate(self, args: List[str]) -> None:
-        buf = self.nvim.current.buffer
-        win = self.nvim.current.window
-        cursor_pos = win.cursor
-        cur_line = self.nvim.funcs.line('.') - 1
-        total_lines = len(buf)
-
-        # Find cell block containing cursor
-        active_block = None
-        for i in range(total_lines):
-            if buf[i].strip() == "<cell>":
-                start = i
-                i += 1
-                while i < total_lines and buf[i].strip() != "</cell>":
-                    i += 1
-                if i < total_lines and buf[i].strip() == "</cell>":
-                    end = i
-                    if start <= cur_line <= end:
-                        active_block = (start, end)
-                        break
-
-        if not active_block:
-            return
-
-        start_line, end_line = active_block
-        expr_lines = buf[start_line + 1:end_line]
-        expr = "\n".join(expr_lines).strip()
-
-        if not expr:
-            return  # Empty cell, skip evaluation
-
-        with self.eval_lock:
-            eval_id = self.eval_counter
-            self.eval_counter += 1
-
-        self._evaluate_cell(buf, win, start_line, end_line, expr, eval_id, cursor_pos)
+        self._evaluate_cell()
 
 
 
@@ -891,13 +893,14 @@ class Molten:
     @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_jump(self, args: List[str]) -> None:
+        self._evaluate_cell()  # Reuse shared evaluation logic
+
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
-        cursor_pos = win.cursor
         cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Find all cell blocks and active block
+        # Find current cell
         active_block = None
         cell_blocks = []
         i = 0
@@ -917,20 +920,9 @@ class Molten:
         if not active_block:
             return
 
-        start_line, end_line = active_block
-        expr_lines = buf[start_line + 1:end_line]
-        expr = "\n".join(expr_lines).strip()
+        _, end_line = active_block
 
-        if not expr:
-            return  # Skip evaluation of empty cells
-
-        with self.eval_lock:
-            eval_id = self.eval_counter
-            self.eval_counter += 1
-
-        self._evaluate_cell(buf, win, start_line, end_line, expr, eval_id, cursor_pos)
-
-        # Cursor movement after output is inserted
+        # Move to next cell or create one if needed
         def _move_cursor_after_output():
             buf_lines = buf[:]
             for i in range(end_line + 1, len(buf_lines)):
@@ -942,10 +934,9 @@ class Molten:
             insert_line = len(buf_lines)
             new_cell = ["<cell>", "", "</cell>"]
             buf.api.set_lines(insert_line, insert_line, False, new_cell)
-            win.cursor = (insert_line + 1 + 1, 0)  # One past <cell> = inside the block
+            win.cursor = (insert_line + 1 + 1, 0)  # Inside new cell
 
         self.nvim.async_call(_move_cursor_after_output)
-
 
 
 
