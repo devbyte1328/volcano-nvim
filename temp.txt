@@ -83,8 +83,8 @@ return {
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "ipynb_interpreted",
   callback = function()
-    vim.keymap.set("n", "<leader><CR>", function() vim.cmd("VolcanoEvaluateJump") end)
     vim.keymap.set("n", "<CR>", function() vim.cmd("VolcanoEvaluate") end)
+    vim.keymap.set("n", "<leader><CR>", function() vim.cmd("VolcanoEvaluateJump") end)
   end,
 })
 
