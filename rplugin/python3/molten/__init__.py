@@ -803,19 +803,32 @@ class Molten:
         cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Locate <cell> start
-        start_line = 0
-        for i in range(cur_line, -1, -1):
+        # Find all valid <cell>...</cell> blocks
+        cell_blocks = []
+        i = 0
+        while i < total_lines:
             if buf[i].strip() == "<cell>":
-                start_line = i
+                start = i
+                # Look for corresponding </cell>
+                i += 1
+                while i < total_lines and buf[i].strip() != "</cell>":
+                    i += 1
+                if i < total_lines and buf[i].strip() == "</cell>":
+                    end = i
+                    cell_blocks.append((start, end))
+            i += 1
+
+        # Check if cursor is within any valid cell block
+        active_block = None
+        for start, end in cell_blocks:
+            if start <= cur_line <= end:
+                active_block = (start, end)
                 break
 
-        # Locate </cell> end
-        end_line = total_lines - 1
-        for i in range(cur_line, total_lines):
-            if buf[i].strip() == "</cell>":
-                end_line = i
-                break
+        if active_block is None:
+            return  # Cursor not in any valid cell block
+
+        start_line, end_line = active_block
 
         # Remove any blank lines after </cell>
         i = end_line + 1
@@ -841,7 +854,6 @@ class Molten:
                 output_end = i
                 break
         if output_start is not None and output_end is not None:
-            # Also remove the blank line *after* </output>, if it exists
             if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
                 output_end += 1
             buf.api.set_lines(output_start, output_end + 1, False, [])
@@ -854,12 +866,10 @@ class Molten:
             eval_id = self.eval_counter
             self.eval_counter += 1
 
-        # Clean up any existing output immediately (to avoid overlapping)
         placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
         buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
         self.nvim.command("undojoin")
 
-        # Queue with frozen values (only primitives)
         self.eval_queue.put({
             "bufnr": buf.number,
             "expr": expr,
@@ -869,7 +879,6 @@ class Molten:
             "cursor_pos": cursor_pos,
             "win_handle": win.handle,
         })
-
 
 
 
