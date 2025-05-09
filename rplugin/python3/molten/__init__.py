@@ -65,6 +65,8 @@ class Molten:
         self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
         self.eval_thread.start()
 
+        self.global_namespaces: Dict[int, Dict[str, Any]] = {}
+
     def _initialize(self) -> None:
         assert not self.initialized
 
@@ -261,7 +263,8 @@ class Molten:
 
             try:
                 full_expr = f"{expr}\nimport time\ntime.sleep(0.15)" # Don't ask questions.
-                exec(full_expr, {})
+                globals_ = self.global_namespaces.setdefault(bufnr, {})
+                exec(full_expr, globals_)
             except Exception:
                 tb = traceback.format_exc()
                 output_queue.put("Error:")
