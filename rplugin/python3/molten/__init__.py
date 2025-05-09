@@ -231,6 +231,59 @@ class Molten:
         self.molten_kernels[kernel_id] = kernel
 
 
+    def _evaluate_cell(self, buf, win, start_line, end_line, expr, eval_id, cursor_pos):
+        # Skip evaluation if expr is empty or only whitespace
+        if not expr.strip():
+            return
+
+        # Remove any blank lines after </cell>
+        i = end_line + 1
+        delete_to = i
+        while delete_to < len(buf):
+            line = buf[delete_to].strip()
+            if line in ("<output>", "<cell>", "</output>", "</cell>") or line != "":
+                break
+            delete_to += 1
+        if delete_to > i:
+            buf.api.set_lines(i, delete_to, False, [])
+
+        # Remove existing <output> block (only up to next <cell>)
+        output_start = None
+        output_end = None
+        for i in range(end_line + 1, len(buf)):
+            line = buf[i].strip()
+            if line == "<cell>":
+                break
+            if line == "<output>":
+                output_start = i
+            elif line == "</output>":
+                output_end = i
+                break
+        if output_start is not None and output_end is not None:
+            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
+                output_end += 1
+            buf.api.set_lines(output_start, output_end + 1, False, [])
+            self.nvim.command("undojoin")
+
+        # Insert new output placeholder block
+        placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
+        buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+        self.nvim.command("undojoin")
+
+        # Queue up async evaluation
+        self.eval_queue.put({
+            "bufnr": buf.number,
+            "expr": expr,
+            "start_line": start_line,
+            "end_line": end_line,
+            "eval_id": eval_id,
+            "cursor_pos": cursor_pos,
+            "win_handle": win.handle,
+        })
+
+
+
+
     def _eval_worker(self):
         while True:
             item = self.eval_queue.get()
@@ -787,101 +840,111 @@ class Molten:
 
 
 
-
-
-
-
-
-
-    @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)  # type: ignore
-    @nvimui  # type: ignore
+    @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)
+    @nvimui
     def command_volcano_evaluate(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
-
         cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Find all valid <cell>...</cell> blocks
-        cell_blocks = []
-        i = 0
-        while i < total_lines:
+        # Find cell block containing cursor
+        active_block = None
+        for i in range(total_lines):
             if buf[i].strip() == "<cell>":
                 start = i
-                # Look for corresponding </cell>
                 i += 1
                 while i < total_lines and buf[i].strip() != "</cell>":
                     i += 1
                 if i < total_lines and buf[i].strip() == "</cell>":
                     end = i
-                    cell_blocks.append((start, end))
-            i += 1
+                    if start <= cur_line <= end:
+                        active_block = (start, end)
+                        break
 
-        # Check if cursor is within any valid cell block
-        active_block = None
-        for start, end in cell_blocks:
-            if start <= cur_line <= end:
-                active_block = (start, end)
-                break
-
-        if active_block is None:
-            return  # Cursor not in any valid cell block
+        if not active_block:
+            return
 
         start_line, end_line = active_block
-
-        # Remove any blank lines after </cell>
-        i = end_line + 1
-        delete_to = i
-        while delete_to < len(buf):
-            line = buf[delete_to].strip()
-            if line in ("<output>", "<cell>", "</output>", "</cell>") or line != "":
-                break
-            delete_to += 1
-        if delete_to > i:
-            buf.api.set_lines(i, delete_to, False, [])
-
-        # Remove existing <output> block, but only up to the next <cell>
-        output_start = None
-        output_end = None
-        for i in range(end_line + 1, len(buf)):
-            line = buf[i].strip()
-            if line == "<cell>":
-                break
-            if line == "<output>":
-                output_start = i
-            elif line == "</output>":
-                output_end = i
-                break
-        if output_start is not None and output_end is not None:
-            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
-                output_end += 1
-            buf.api.set_lines(output_start, output_end + 1, False, [])
-            self.nvim.command("undojoin")
-
         expr_lines = buf[start_line + 1:end_line]
-        expr = "\n".join(expr_lines)
+        expr = "\n".join(expr_lines).strip()
+
+        if not expr:
+            return  # Empty cell, skip evaluation
 
         with self.eval_lock:
             eval_id = self.eval_counter
             self.eval_counter += 1
 
-        placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
-        buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
-        self.nvim.command("undojoin")
-
-        self.eval_queue.put({
-            "bufnr": buf.number,
-            "expr": expr,
-            "start_line": start_line,
-            "end_line": end_line,
-            "eval_id": eval_id,
-            "cursor_pos": cursor_pos,
-            "win_handle": win.handle,
-        })
+        self._evaluate_cell(buf, win, start_line, end_line, expr, eval_id, cursor_pos)
 
 
 
+
+
+
+
+
+
+
+    @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_evaluate_jump(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
+        cur_line = self.nvim.funcs.line('.') - 1
+        total_lines = len(buf)
+
+        # Find all cell blocks and active block
+        active_block = None
+        cell_blocks = []
+        i = 0
+        while i < total_lines:
+            if buf[i].strip() == "<cell>":
+                start = i
+                i += 1
+                while i < total_lines and buf[i].strip() != "</cell>":
+                    i += 1
+                if i < total_lines:
+                    end = i
+                    cell_blocks.append((start, end))
+                    if start <= cur_line <= end:
+                        active_block = (start, end)
+            i += 1
+
+        if not active_block:
+            return
+
+        start_line, end_line = active_block
+        expr_lines = buf[start_line + 1:end_line]
+        expr = "\n".join(expr_lines).strip()
+
+        if not expr:
+            return  # Skip evaluation of empty cells
+
+        with self.eval_lock:
+            eval_id = self.eval_counter
+            self.eval_counter += 1
+
+        self._evaluate_cell(buf, win, start_line, end_line, expr, eval_id, cursor_pos)
+
+        # Cursor movement after output is inserted
+        def _move_cursor_after_output():
+            buf_lines = buf[:]
+            for i in range(end_line + 1, len(buf_lines)):
+                if buf_lines[i].strip() == "<cell>":
+                    win.cursor = (i + 1, 0)
+                    return
+
+            # No next cell — insert one
+            insert_line = len(buf_lines)
+            new_cell = ["", "<cell>", "", "</cell>", ""]
+            buf.api.set_lines(insert_line, insert_line, False, new_cell)
+            win.cursor = (insert_line + 2, 0)  # Inside the new cell
+
+        self.nvim.async_call(_move_cursor_after_output)
 
 
 
