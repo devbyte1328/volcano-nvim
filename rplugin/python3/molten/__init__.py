@@ -940,9 +940,9 @@ class Molten:
 
             # No next cell — insert one
             insert_line = len(buf_lines)
-            new_cell = ["", "<cell>", "", "</cell>", ""]
+            new_cell = ["<cell>", "", "</cell>"]
             buf.api.set_lines(insert_line, insert_line, False, new_cell)
-            win.cursor = (insert_line + 2, 0)  # Inside the new cell
+            win.cursor = (insert_line + 1 + 1, 0)  # One past <cell> = inside the block
 
         self.nvim.async_call(_move_cursor_after_output)
 
