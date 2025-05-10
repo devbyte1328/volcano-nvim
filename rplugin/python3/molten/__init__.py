@@ -319,7 +319,7 @@ class Molten:
             "eval_id": eval_id,
             "cursor_pos": cursor_pos,
             "win_handle": win.handle,
-            "delay": delay,  # pass delay flag to worker
+            "delay": delay, 
         })
 
 
@@ -357,7 +357,7 @@ class Molten:
             sys.stdout = StreamingStdout()
 
             try:
-                full_expr = f"{expr}\nimport time\ntime.sleep(0.15)"  # Don't ask questions.
+                full_expr = f"{expr}\nimport time\ntime.sleep(0.16)"  # Don't ask questions.
                 globals_ = self.global_namespaces.setdefault(bufnr, {})
                 exec(full_expr, globals_)
             except Exception:
@@ -399,7 +399,7 @@ class Molten:
         update_output_block(lines_so_far)
 
         if delay:
-            time.sleep(5) 
+            time.sleep(0.5) 
 
         start_time = time.time() 
 
@@ -427,7 +427,7 @@ class Molten:
                     last_update_time = now
 
         # Final update to ensure output is flushed and status is Done
-        elapsed = time.time() - start_time - 0.15  # Don't ask questions.
+        elapsed = time.time() - start_time - 0.16  # Don't ask questions.
         elapsed = max(0, elapsed)
         lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
@@ -903,19 +903,22 @@ class Molten:
 
 
 
-    @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
+    @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
     @nvimui
-    def command_volcano_evaluate_jump(self, args: List[str]) -> None:
-        self._evaluate_cell()  # Reuse shared evaluation logic
+    def command_volcano_evaluate_above(self, args: List[str]) -> None:
+        import threading
+        import time
 
-        buf = self.nvim.current.buffer
         win = self.nvim.current.window
-        cur_line = self.nvim.funcs.line('.') - 1
+        buf = self.nvim.current.buffer
         total_lines = len(buf)
 
-        # Find current cell
-        active_block = None
-        cell_blocks = []
+        # Record original position
+        original_cursor = win.cursor
+        original_line = original_cursor[0] - 1  # Convert to 0-based
+
+        # Gather all <cell> blocks that start before or contain the original line
+        cell_positions = []
         i = 0
         while i < total_lines:
             if buf[i].strip() == "<cell>":
@@ -923,36 +926,23 @@ class Molten:
                 i += 1
                 while i < total_lines and buf[i].strip() != "</cell>":
                     i += 1
-                if i < total_lines:
+                if i < total_lines and buf[i].strip() == "</cell>":
                     end = i
-                    cell_blocks.append((start, end))
-                    if start <= cur_line <= end:
-                        active_block = (start, end)
+                    if start <= original_line:
+                        cell_positions.append(start)
             i += 1
 
-        if not active_block:
-            return
+        def evaluate_cells():
+            for cell_start in cell_positions:
+                def move_and_eval(start=cell_start):
+                    win.cursor = (start + 1, 0)
+                    self._evaluate_cell()
 
-        _, end_line = active_block
+                self.nvim.async_call(move_and_eval)
+                time.sleep(1.2)  # Sleep between cells for clarity and stability
 
-        # Move to next cell or create one if needed
-        def _move_cursor_after_output():
-            buf_lines = buf[:]
-            for i in range(end_line + 1, len(buf_lines)):
-                if buf_lines[i].strip() == "<cell>":
-                    win.cursor = (i + 1, 0)
-                    return
-
-            # No next cell — insert one
-            insert_line = len(buf_lines)
-            new_cell = ["<cell>", "", "</cell>"]
-            buf.api.set_lines(insert_line, insert_line, False, new_cell)
-            win.cursor = (insert_line + 1 + 1, 0)  # Inside new cell
-
-        self.nvim.async_call(_move_cursor_after_output)
-
-
-
+        thread = threading.Thread(target=evaluate_cells, daemon=True)
+        thread.start()
 
 
 
@@ -989,19 +979,22 @@ class Molten:
                         cell_positions.append(start)
             i += 1
 
-        def move_through_cells():
-            for cell_start in cell_positions:
-                def move_cursor(start=cell_start):
+        def evaluate_cells():
+            offset = 0
+            for idx, original_start in enumerate(cell_positions):
+                adjusted_start = original_start + offset
+
+                def move_and_eval(start=adjusted_start, delay=(idx == 0)):
                     win.cursor = (start + 1, 0)
-                self.nvim.async_call(move_cursor)
-                time.sleep(5)  # Pause 5 seconds
+                    self._evaluate_cell(delay=delay)
 
-        thread = threading.Thread(target=move_through_cells, daemon=True)
-        thread.start()
+                self.nvim.async_call(move_and_eval)
 
+                # After evaluation, 4 lines are added (output block)
+                offset += 4
+                time.sleep(0.01)  
 
-
-
+        threading.Thread(target=evaluate_cells, daemon=True).start()
 
 
 
