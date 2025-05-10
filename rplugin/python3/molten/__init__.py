@@ -903,22 +903,20 @@ class Molten:
 
 
 
-    @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
-    @nvimui
-    def command_volcano_evaluate_above(self, args: List[str]) -> None:
-        import threading
-        import time
 
-        win = self.nvim.current.window
+    @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_evaluate_jump(self, args: List[str]) -> None:
+        self._evaluate_cell()  # Reuse shared evaluation logic
+
         buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cur_line = self.nvim.funcs.line('.') - 1
         total_lines = len(buf)
 
-        # Record original position
-        original_cursor = win.cursor
-        original_line = original_cursor[0] - 1  # Convert to 0-based
-
-        # Gather all <cell> blocks that start before or contain the original line
-        cell_positions = []
+        # Find current cell
+        active_block = None
+        cell_blocks = []
         i = 0
         while i < total_lines:
             if buf[i].strip() == "<cell>":
@@ -926,24 +924,33 @@ class Molten:
                 i += 1
                 while i < total_lines and buf[i].strip() != "</cell>":
                     i += 1
-                if i < total_lines and buf[i].strip() == "</cell>":
+                if i < total_lines:
                     end = i
-                    if start <= original_line:
-                        cell_positions.append(start)
+                    cell_blocks.append((start, end))
+                    if start <= cur_line <= end:
+                        active_block = (start, end)
             i += 1
 
-        def evaluate_cells():
-            for cell_start in cell_positions:
-                def move_and_eval(start=cell_start):
-                    win.cursor = (start + 1, 0)
-                    self._evaluate_cell()
+        if not active_block:
+            return
 
-                self.nvim.async_call(move_and_eval)
-                time.sleep(1.2)  # Sleep between cells for clarity and stability
+        _, end_line = active_block
 
-        thread = threading.Thread(target=evaluate_cells, daemon=True)
-        thread.start()
+        # Move to next cell or create one if needed
+        def _move_cursor_after_output():
+            buf_lines = buf[:]
+            for i in range(end_line + 1, len(buf_lines)):
+                if buf_lines[i].strip() == "<cell>":
+                    win.cursor = (i + 1, 0)
+                    return
 
+            # No next cell — insert one
+            insert_line = len(buf_lines)
+            new_cell = ["<cell>", "", "</cell>"]
+            buf.api.set_lines(insert_line, insert_line, False, new_cell)
+            win.cursor = (insert_line + 1 + 1, 0)  # Inside new cell
+
+        self.nvim.async_call(_move_cursor_after_output)
 
 
 
