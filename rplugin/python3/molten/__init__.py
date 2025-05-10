@@ -235,8 +235,9 @@ class Molten:
         self.molten_kernels[kernel_id] = kernel
 
 
-    def _evaluate_cell(self):
 
+
+    def _evaluate_cell(self, delay: bool = False):
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
@@ -270,7 +271,6 @@ class Molten:
         with self.eval_lock:
             eval_id = self.eval_counter
             self.eval_counter += 1
-
 
         # Skip evaluation if expr is empty or only whitespace
         if not expr.strip():
@@ -319,7 +319,12 @@ class Molten:
             "eval_id": eval_id,
             "cursor_pos": cursor_pos,
             "win_handle": win.handle,
+            "delay": delay,  # pass delay flag to worker
         })
+
+
+
+
 
 
 
@@ -336,9 +341,10 @@ class Molten:
 
 
 
-    def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle):
+
+
+    def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = queue.Queue()
-        start_time = time.time()
 
         class StreamingStdout:
             def write(self, text):
@@ -351,7 +357,7 @@ class Molten:
             sys.stdout = StreamingStdout()
 
             try:
-                full_expr = f"{expr}\nimport time\ntime.sleep(0.15)" # Don't ask questions.
+                full_expr = f"{expr}\nimport time\ntime.sleep(0.15)"  # Don't ask questions.
                 globals_ = self.global_namespaces.setdefault(bufnr, {})
                 exec(full_expr, globals_)
             except Exception:
@@ -388,9 +394,14 @@ class Molten:
 
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         last_update_time = 0
-        update_interval = 0.3  # seconds
+        update_interval = 0.3
 
         update_output_block(lines_so_far)
+
+        if delay:
+            time.sleep(5) 
+
+        start_time = time.time() 
 
         eval_thread = threading.Thread(target=run_eval)
         eval_thread.start()
@@ -415,11 +426,13 @@ class Molten:
                     update_output_block(lines_so_far)
                     last_update_time = now
 
-        # Final update to ensure all output is flushed and status marked as Done
+        # Final update to ensure output is flushed and status is Done
         elapsed = time.time() - start_time - 0.15  # Don't ask questions.
         elapsed = max(0, elapsed)
         lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
+
+
 
 
 
