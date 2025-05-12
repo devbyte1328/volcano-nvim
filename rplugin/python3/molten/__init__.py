@@ -236,6 +236,13 @@ class Molten:
         self.molten_kernels[kernel_id] = kernel
 
 
+    def _clean_output_blocks(self, lines: List[str]) -> List[str]:
+        """Remove <output>...</output> blocks and collapse excess newlines from the given lines."""
+        source = "\n".join(lines)
+        cleaned = re.sub(r"\n?<output>.*?</output>\n?", "", source, flags=re.DOTALL)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = cleaned.rstrip()
+        return cleaned.splitlines()
 
 
     def _evaluate_cell(self, delay: bool = False):
@@ -400,7 +407,7 @@ class Molten:
         update_output_block(lines_so_far)
 
         if delay:
-            time.sleep(5) 
+            time.sleep(0.5) 
 
         start_time = time.time() 
 
@@ -978,6 +985,10 @@ class Molten:
     @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_above(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
+        buf[0:cursor_row - 1] = self._clean_output_blocks(buf[0:cursor_row - 1])
+
         buf = self.nvim.current.buffer[:]
         win = self.nvim.current.window
         cursor_line = win.cursor[0] - 1  # 0-based index
@@ -1005,7 +1016,7 @@ class Molten:
                         first_offset += 4
 
                     cell_instance -= 1
-                    time.sleep(1)
+                    time.sleep(0.01)
 
                 target_line += 1
                 
@@ -1016,57 +1027,29 @@ class Molten:
 
 
 
+
     @pynvim.command("VolcanoDeleteOutput", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
-        source = "\n".join(buf)
-        cleaned = re.sub(r"\n?<output>.*?</output>\n?", "", source, flags=re.DOTALL)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = cleaned.rstrip()
-        new_buf = cleaned.splitlines()
-        buf[:] = new_buf
+        buf[:] = self._clean_output_blocks(buf[:])
         buf.api.set_lines(len(buf), len(buf), False, [""])
-
 
 
     @pynvim.command("VolcanoDeleteOutputAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output_above(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
-        cursor_row = self.nvim.current.window.cursor[0]  # 1-based index
-        lines_above = buf[:cursor_row - 1]  # slice is 0-based, exclude current line
-        source_above = "\n".join(lines_above)
-
-        # Remove all <output>...</output> blocks above the cursor
-        cleaned_above = re.sub(r"\n?<output>.*?</output>\n?", "", source_above, flags=re.DOTALL)
-        cleaned_above = re.sub(r"\n{3,}", "\n\n", cleaned_above)
-        cleaned_above = cleaned_above.rstrip()
-        new_lines_above = cleaned_above.splitlines()
-
-        # Replace lines above the cursor
-        buf[0:cursor_row - 1] = new_lines_above
-
+        cursor_row = self.nvim.current.window.cursor[0]
+        buf[0:cursor_row - 1] = self._clean_output_blocks(buf[0:cursor_row - 1])
 
 
     @pynvim.command("VolcanoDeleteOutputBelow", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output_below(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
-        cursor_row = self.nvim.current.window.cursor[0]  # 1-based index
-        lines_below = buf[cursor_row:]  # slice from line *after* cursor
-
-        source_below = "\n".join(lines_below)
-
-        # Remove all <output>...</output> blocks below the cursor
-        cleaned_below = re.sub(r"\n?<output>.*?</output>\n?", "", source_below, flags=re.DOTALL)
-        cleaned_below = re.sub(r"\n{3,}", "\n\n", cleaned_below)
-        cleaned_below = cleaned_below.rstrip()
-        new_lines_below = cleaned_below.splitlines()
-
-        # Replace lines below the cursor
-        buf[cursor_row:] = new_lines_below
-
+        cursor_row = self.nvim.current.window.cursor[0]
+        buf[cursor_row:] = self._clean_output_blocks(buf[cursor_row:])
 
 
 
