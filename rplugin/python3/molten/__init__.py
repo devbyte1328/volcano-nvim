@@ -944,7 +944,7 @@ class Molten:
 
         _, end_line = active_block
 
-        # Move to next cell or create one if needed
+        # Move to next cell or create one
         def _move_cursor_after_output():
             buf_lines = buf[:]
             for i in range(end_line + 1, len(buf_lines)):
@@ -952,11 +952,18 @@ class Molten:
                     win.cursor = (i + 1, 0)
                     return
 
-            # No next cell — insert one
+            # No next cell — insert one with spacing
             insert_line = len(buf_lines)
+
+            # Add a newline if the last line isn't empty
+            if buf_lines and buf_lines[-1].strip() != "":
+                buf.api.set_lines(insert_line, insert_line, False, [""])
+                insert_line += 1
+
             new_cell = ["<cell>", "", "</cell>"]
             buf.api.set_lines(insert_line, insert_line, False, new_cell)
-            win.cursor = (insert_line + 1 + 1, 0)  # Inside new cell
+            win.cursor = (insert_line + 1, 0)  # Inside new cell
+
 
         self.nvim.async_call(_move_cursor_after_output)
 
