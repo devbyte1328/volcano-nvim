@@ -899,6 +899,46 @@ class Molten:
 
 
 
+    @pynvim.command("VolcanoEvaluateAll", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_evaluate_all(self, args: List[str]) -> None:
+        buf_obj = self.nvim.current.buffer
+        win = self.nvim.current.window
+        self.nvim.async_call(lambda: setattr(win, "cursor", (1, 0)))
+        cursor_row = win.cursor[0]
+
+        # Clean output blocks from cursor row downward
+        buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
+
+        buf = buf_obj[:]
+        cursor_line = win.cursor[0] - 1  # 0-based index
+
+        def run():
+            cell_lines = []
+            for i in range(cursor_line, len(buf)):
+                if buf[i].strip() == "<cell>":
+                    cell_lines.append(i)
+
+            first_cell = True
+            first_offset = 4
+            offset_accumulator = 0  # Keeps track of added lines
+
+            for cell_line in cell_lines:
+                adjusted_line = cell_line + offset_accumulator
+
+                if first_cell:
+                    self.nvim.async_call(lambda l=adjusted_line: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
+                    first_cell = False
+                else:
+                    self.nvim.async_call(lambda l=adjusted_line + first_offset: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda: self._evaluate_cell())
+                    offset_accumulator += first_offset
+
+                time.sleep(0.01)
+
+        threading.Thread(target=run, daemon=True).start()
+
 
 
 
