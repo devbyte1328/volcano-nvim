@@ -236,13 +236,34 @@ class Molten:
         self.molten_kernels[kernel_id] = kernel
 
 
+
+
+    def _move_cursor_to(self, win, line):
+        win.cursor = (line + 1, 0)
+
+
+
+
+
+
     def _clean_output_blocks(self, lines: List[str]) -> List[str]:
-        """Remove <output>...</output> blocks and collapse excess newlines from the given lines."""
         source = "\n".join(lines)
-        cleaned = re.sub(r"\n?<output>.*?</output>\n?", "", source, flags=re.DOTALL)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = cleaned.rstrip()
-        return cleaned.splitlines()
+        open_tags = source.count("<output>")
+        close_tags = source.count("</output>")
+        if open_tags == close_tags and (open_tags + close_tags) % 2 == 0:
+            cleaned = re.sub(r"^<output>.*?</output>\n?", "", source, flags=re.DOTALL | re.MULTILINE)
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+            cleaned = cleaned.rstrip()
+            return cleaned.splitlines()
+        elif open_tags != close_tags or (open_tags + close_tags) % 2 != 0:
+            return False
+
+
+
+
+
+
+
 
 
     def _evaluate_cell(self, delay: bool = False):
@@ -1002,45 +1023,69 @@ class Molten:
 
 
 
+
+
+
     @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_above(self, args: List[str]) -> None:
         buf_obj = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
+
+        # Check if current line contains '<output>', move cursor down if so
+        if '<output>' in buf_obj[cursor_row - 1]:
+            if cursor_row < len(buf_obj):  # Avoid moving past end of buffer
+                cursor_row += 1
+                self.nvim.current.window.cursor = (cursor_row, 0)
+
+        new_buf = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
+
+        if new_buf == False:
+            while new_buf == False:
+                if cursor_row < len(buf_obj):
+                    cursor_row += 1
+                    self.nvim.current.window.cursor = (cursor_row, 0)
+                    new_buf = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
+                else:
+                    break
+
+        if new_buf != False:
+            buf_obj[0:cursor_row - 1] = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
+
+        buf = buf_obj[:]
         win = self.nvim.current.window
         cursor_row = win.cursor[0]
 
-        # Clean output blocks from top to the cursor line
-        buf_obj[:cursor_row - 1] = self._clean_output_blocks(buf_obj[:cursor_row - 1])
-
-        buf = buf_obj[:]
-        cursor_line = cursor_row - 1  # 0-based index
-
+        cell_instance = 0
         def run():
-            # Gather all <cell> lines above the current cursor line
-            cell_lines = [i for i in range(cursor_line) if buf[i].strip() == "<cell>"]
-
+            cell_instance = 0
             first_cell = True
-            first_offset = 4
-            offset_accumulator = 0  # Keeps track of added lines
+            offset = 0
 
-            for cell_line in cell_lines:
-                adjusted_line = cell_line + offset_accumulator
+            for line in range(cursor_row):
+                if buf[line].strip() == "<cell>":
+                    target_line = line + offset
+                    if first_cell:
+                        self.nvim.async_call(lambda line=target_line: (
+                            self._move_cursor_to(win, line),
+                            self._evaluate_cell(delay=True)
+                        ))
+                        first_cell = False
+                    else:
+                        self.nvim.async_call(lambda line=target_line: (
+                            self._move_cursor_to(win, line),
+                            self._evaluate_cell()
+                        ))
+                    offset += 4
+                    time.sleep(0.01)
 
-                if first_cell:
-                    self.nvim.async_call(lambda l=adjusted_line: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
-                    first_cell = False
-                else:
-                    self.nvim.async_call(lambda l=adjusted_line + first_offset: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell())
-                    offset_accumulator += first_offset
-
-                time.sleep(0.01)
 
         threading.Thread(target=run, daemon=True).start()
 
 
 
+
+        
 
 
     @pynvim.command("VolcanoEvaluateBelow", nargs="*", sync=True)
@@ -1093,12 +1138,32 @@ class Molten:
         buf.api.set_lines(len(buf), len(buf), False, [""])
 
 
+
     @pynvim.command("VolcanoDeleteOutputAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output_above(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         cursor_row = self.nvim.current.window.cursor[0]
-        buf[0:cursor_row - 1] = self._clean_output_blocks(buf[0:cursor_row - 1])
+
+        # Check if current line contains '<output>', move cursor down if so
+        if '<output>' in buf[cursor_row - 1]:
+            if cursor_row < len(buf):  # Avoid moving past end of buffer
+                cursor_row += 1
+                self.nvim.current.window.cursor = (cursor_row, 0)
+
+        new_buf = self._clean_output_blocks(buf[0:cursor_row - 1])
+
+        if new_buf == False:
+            while new_buf == False:
+                if cursor_row < len(buf):
+                    cursor_row += 1
+                    self.nvim.current.window.cursor = (cursor_row, 0)
+                    new_buf = self._clean_output_blocks(buf[0:cursor_row - 1])
+                else:
+                    break
+
+        if new_buf != False:
+            buf[0:cursor_row - 1] = self._clean_output_blocks(buf[0:cursor_row - 1])
 
 
     @pynvim.command("VolcanoDeleteOutputBelow", nargs="*", sync=True)
