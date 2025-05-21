@@ -85,13 +85,17 @@ vim.api.nvim_create_autocmd("FileType", {
   callback = function()
     vim.keymap.set("n", "<Space>", "<Nop>")
     vim.keymap.set("n", "<CR>", function() vim.cmd("VolcanoEvaluate") end)
+    vim.keymap.set("n", "<leader><leader><CR>", function() vim.cmd("VolcanoEvaluateAll") end)
     vim.keymap.set("n", "<leader><CR>", function() vim.cmd("VolcanoEvaluateJump") end)
     vim.keymap.set("n", "<leader>k<CR>", function() vim.cmd("VolcanoEvaluateAbove") end)
+    vim.keymap.set("n", "<leader>j<CR>", function() vim.cmd("VolcanoEvaluateBelow") end)
     vim.keymap.set("n", "<leader>c", function() vim.cmd("VolcanoDeleteOutput") end)
     vim.keymap.set("n", "<leader>kc", function() vim.cmd("VolcanoDeleteOutputAbove") end)
     vim.keymap.set("n", "<leader>jc", function() vim.cmd("VolcanoDeleteOutputBelow") end)
+    vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellType") end)
   end,
 })
+
 
 
 

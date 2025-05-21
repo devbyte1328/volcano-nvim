@@ -1203,6 +1203,85 @@ class Molten:
 
 
 
+    @pynvim.command("VolcanoSwitchCellType", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_switch_cell_type(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_row = self.nvim.current.window.cursor[0]
+
+        def run():
+            ontop_of_cell_element = False
+
+            if buf[cursor_row-1] == "<cell>":
+                ontop_of_cell_element = True
+                buf[cursor_row-1] = "<markdown>"
+                next_line = 1
+                try:
+                    while True:
+                        if buf[cursor_row-1 + next_line] == "</cell>":
+                            buf[cursor_row-1 + next_line] = "</markdown>"
+                            break
+                        next_line += 1
+                except:
+                    pass
+
+            elif buf[cursor_row-1] == "</cell>":
+                ontop_of_cell_element = True
+                buf[cursor_row-1] = "</markdown>"
+                next_line = -1
+                try:
+                    while True:
+                        if buf[cursor_row-1 + next_line] == "<cell>":
+                            buf[cursor_row-1 + next_line] = "<markdown>"
+                            break
+                        next_line -= 1
+                except:
+                    pass
+
+            if ontop_of_cell_element == False:
+                try:
+                    next_line = 1
+                    while True:
+                        if buf[cursor_row-1+next_line] == "<cell>":
+                            break
+                        elif buf[cursor_row-1+next_line] == "</cell>":
+                            buf[cursor_row-1+next_line] = "</markdown>"
+                            next_line = -1
+                            try:
+                                while True:
+                                    if buf[cursor_row-1 + next_line] == "<cell>":
+                                        buf[cursor_row-1 + next_line] = "<markdown>"
+                                        break
+                                    next_line -= 1
+                            except:
+                                pass
+                            break
+                        next_line += 1
+                except:
+                    pass
+
+        self.nvim.async_call(run)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore
     def command_reevaluate_all(self) -> None:
