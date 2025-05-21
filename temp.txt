@@ -92,7 +92,8 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.keymap.set("n", "<leader>c", function() vim.cmd("VolcanoDeleteOutput") end)
     vim.keymap.set("n", "<leader>kc", function() vim.cmd("VolcanoDeleteOutputAbove") end)
     vim.keymap.set("n", "<leader>jc", function() vim.cmd("VolcanoDeleteOutputBelow") end)
-    vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellType") end)
+    vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellTypeForward") end)
+    vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end)
   end,
 })
 

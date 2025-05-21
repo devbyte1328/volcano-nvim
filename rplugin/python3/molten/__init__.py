@@ -259,8 +259,88 @@ class Molten:
             return False
 
 
+    def _switch_cell_type(self, direction: str) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
 
+        tag_order = ["<cell>", "<markdown>", "<raw>"]
+        closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
+        def rotate_tag(tag, is_closing):
+            tags = closing_tag_order if is_closing else tag_order
+            idx = tags.index(tag) if tag in tags else -1
+            if idx == -1:
+                return tag
+            if direction == "forward":
+                return tags[(idx + 1) % len(tags)]
+            else:
+                return tags[(idx - 1) % len(tags)]
+
+        def run():
+            row = cursor_row - 1
+
+            def is_opening_tag(line):
+                return line.strip() in tag_order
+
+            def is_closing_tag(line):
+                return line.strip() in closing_tag_order
+
+            # Case 1: Cursor is directly on an opening tag
+            if is_opening_tag(buf[row]):
+                try:
+                    next_line = 1
+                    while True:
+                        if is_closing_tag(buf[row + next_line]):
+                            buf[row] = rotate_tag(buf[row], is_closing=False)
+                            buf[row + next_line] = rotate_tag(buf[row + next_line], is_closing=True)
+                            return
+                        next_line += 1
+                except IndexError:
+                    return
+
+            # Case 2: Cursor is directly on a closing tag
+            elif is_closing_tag(buf[row]):
+                try:
+                    prev_line = -1
+                    while True:
+                        if is_opening_tag(buf[row + prev_line]):
+                            buf[row + prev_line] = rotate_tag(buf[row + prev_line], is_closing=False)
+                            buf[row] = rotate_tag(buf[row], is_closing=True)
+                            return
+                        prev_line -= 1
+                except IndexError:
+                    return
+
+            # Case 3: Cursor is inside a block (must find BOTH tags)
+            else:
+                try:
+                    # Search upward for opening tag
+                    start = row
+                    while start >= 0 and not is_opening_tag(buf[start]):
+                        if is_closing_tag(buf[start]):
+                            return  # hit another block, not inside one
+                        start -= 1
+
+                    if start < 0 or not is_opening_tag(buf[start]):
+                        return
+
+                    # Search downward for closing tag
+                    end = row
+                    while end < len(buf) and not is_closing_tag(buf[end]):
+                        if is_opening_tag(buf[end]):
+                            return  # hit another block, not inside one
+                        end += 1
+
+                    if end >= len(buf) or not is_closing_tag(buf[end]):
+                        return
+
+                    # Valid block boundaries found
+                    buf[start] = rotate_tag(buf[start], is_closing=False)
+                    buf[end] = rotate_tag(buf[end], is_closing=True)
+                except IndexError:
+                    return
+
+        self.nvim.async_call(run)
 
 
 
@@ -1203,65 +1283,15 @@ class Molten:
 
 
 
-    @pynvim.command("VolcanoSwitchCellType", nargs="*", sync=True)
+    @pynvim.command("VolcanoSwitchCellTypeForward", nargs="*", sync=True)
     @nvimui
-    def command_volcano_switch_cell_type(self, args: List[str]) -> None:
-        buf = self.nvim.current.buffer
-        win = self.nvim.current.window
-        cursor_row = self.nvim.current.window.cursor[0]
+    def command_volcano_switch_cell_type_forward(self, args: List[str]) -> None:
+        self._switch_cell_type(direction="forward")
 
-        def run():
-            ontop_of_cell_element = False
-
-            if buf[cursor_row-1] == "<cell>":
-                ontop_of_cell_element = True
-                buf[cursor_row-1] = "<markdown>"
-                next_line = 1
-                try:
-                    while True:
-                        if buf[cursor_row-1 + next_line] == "</cell>":
-                            buf[cursor_row-1 + next_line] = "</markdown>"
-                            break
-                        next_line += 1
-                except:
-                    pass
-
-            elif buf[cursor_row-1] == "</cell>":
-                ontop_of_cell_element = True
-                buf[cursor_row-1] = "</markdown>"
-                next_line = -1
-                try:
-                    while True:
-                        if buf[cursor_row-1 + next_line] == "<cell>":
-                            buf[cursor_row-1 + next_line] = "<markdown>"
-                            break
-                        next_line -= 1
-                except:
-                    pass
-
-            if ontop_of_cell_element == False:
-                try:
-                    next_line = 1
-                    while True:
-                        if buf[cursor_row-1+next_line] == "<cell>":
-                            break
-                        elif buf[cursor_row-1+next_line] == "</cell>":
-                            buf[cursor_row-1+next_line] = "</markdown>"
-                            next_line = -1
-                            try:
-                                while True:
-                                    if buf[cursor_row-1 + next_line] == "<cell>":
-                                        buf[cursor_row-1 + next_line] = "<markdown>"
-                                        break
-                                    next_line -= 1
-                            except:
-                                pass
-                            break
-                        next_line += 1
-                except:
-                    pass
-
-        self.nvim.async_call(run)
+    @pynvim.command("VolcanoSwitchCellTypeBackward", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_switch_cell_type_backward(self, args: List[str]) -> None:
+        self._switch_cell_type(direction="backward")
 
 
 
