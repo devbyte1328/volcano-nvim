@@ -38,34 +38,49 @@ return {
             },
         })
 
-        -- Manually enforce filetype for backup (some systems don't detect it)
+        -- Manually enforce filetype
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             pattern = "*.ipynb.interpreted",
             command = "set filetype=ipynb_interpreted",
         })
 
-        -- Syntax highlighting for ipynb_interpreted filetype
+        -- Syntax highlighting for ipynb_interpreted
         vim.api.nvim_create_autocmd("FileType", {
             pattern = "ipynb_interpreted",
             callback = function()
                 vim.schedule(function()
                     vim.cmd([[
+                        " Tag matches
                         syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
                         syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
                         syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
                         syntax match IPYNBOutputTag /^<\/output>$/ containedin=ALL
+                        syntax match IPYNBMarkdownTag /^<markdown>$/ containedin=ALL
+                        syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
+                        syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
+                        syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
 
+                        " Python for cell blocks
                         syntax include @Python syntax/python.vim
-                        syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
 
+                        " Define regions
+                        syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
+                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBGenericText keepend
+                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBGenericText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
+
+                        " Inner content matching
+                        syntax match IPYNBGenericText /.*/ contained
                         syntax match IPYNBOutputText /.*/ contained
 
-                        " Dark gray tags
+                        " Highlight tags (dark gray)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240
 
-                        " Bright white output content
+                        " Highlight content (bright white)
+                        highlight IPYNBGenericText guifg=#ffffff ctermfg=231
                         highlight IPYNBOutputText guifg=#ffffff ctermfg=231
                     ]])
                 end)
@@ -73,6 +88,138 @@ return {
         })
     end,
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+return {
+    dir = vim.fn.stdpath("config") .. "/lua/local_plugins/volcano-nvim",
+    name = "volcano-nvim",
+    build = ":UpdateRemotePlugins",
+    config = function()
+        -- Set up Python provider to use local venv
+        vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
+
+        -- Ensure Jupyter runtime directory exists
+        local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
+        if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
+            vim.fn.mkdir(jupyter_runtime_dir, "p")
+        end
+
+        -- Molten config
+        vim.g.molten_output_win_max_height = 12
+
+        -- Auto-run :VolcanoInit if opening a .ipynb file
+        vim.api.nvim_create_autocmd("BufReadPost", {
+            pattern = "*.ipynb",
+            callback = function()
+                vim.cmd("VolcanoInit")
+            end,
+        })
+
+        -- Auto-run :SaveIPYNB after saving interpreted notebook files
+        vim.api.nvim_create_autocmd("BufWritePost", {
+            pattern = "*.ipynb.interpreted",
+            callback = function()
+                vim.cmd("SaveIPYNB")
+            end,
+        })
+
+        -- Register custom filetype
+        vim.filetype.add({
+            extension = {
+                ["ipynb.interpreted"] = "ipynb_interpreted",
+            },
+        })
+
+        -- Manually enforce filetype
+        vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+            pattern = "*.ipynb.interpreted",
+            command = "set filetype=ipynb_interpreted",
+        })
+
+        -- Syntax highlighting for ipynb_interpreted
+        vim.api.nvim_create_autocmd("FileType", {
+            pattern = "ipynb_interpreted",
+            callback = function()
+                vim.schedule(function()
+                    vim.cmd([[
+                        " Match tags
+                        syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
+                        syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
+                        syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
+                        syntax match IPYNBOutputTag /^<\/output>$/ containedin=ALL
+                        syntax match IPYNBMarkdownTag /^<markdown>$/ containedin=ALL
+                        syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
+                        syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
+                        syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
+
+                        " Include Python syntax in code cells
+                        syntax include @Python syntax/python.vim
+
+                        " Define block regions
+                        syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
+                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBGenericText keepend
+                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBGenericText keepend
+                        syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
+
+                        " Generic content
+                        syntax match IPYNBGenericText /.*/ contained
+                        syntax match IPYNBOutputText /.*/ contained
+
+                        " Tag highlighting (dark gray)
+                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240
+                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240
+
+                        " Content highlighting (bright white)
+                        highlight IPYNBGenericText guifg=#ffffff ctermfg=231
+                        highlight IPYNBOutputText guifg=#ffffff ctermfg=231
+                    ]])
+                end)
+            end,
+        })
+    end,
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -96,6 +243,22 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end)
   end,
 })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
