@@ -74,6 +74,10 @@ return {
                         syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
 
+                        " Status markers inside output
+                        syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
+
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -84,6 +88,10 @@ return {
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
+
+                        " Output status highlighting
+                        highlight IPYNBEvalRunning guifg=orange ctermfg=208
+                        highlight IPYNBEvalDone guifg=green ctermfg=34
                     ]])
                 end)
             end,
@@ -188,6 +196,10 @@ return {
                         syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
 
+                        " Status markers inside output
+                        syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
+
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -198,12 +210,17 @@ return {
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
+
+                        " Output status highlighting
+                        highlight IPYNBEvalRunning guifg=orange ctermfg=208
+                        highlight IPYNBEvalDone guifg=green ctermfg=34
                     ]])
                 end)
             end,
         })
     end,
 }
+
 
 
 
