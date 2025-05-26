@@ -50,7 +50,7 @@ return {
             callback = function()
                 vim.schedule(function()
                     vim.cmd([[
-                        " Tag matches
+                        " Match tags
                         syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
                         syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
                         syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
@@ -60,28 +60,30 @@ return {
                         syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
 
-                        " Python for cell blocks
+                        " Include Python syntax in code cells
                         syntax include @Python syntax/python.vim
 
-                        " Define regions
+                        " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
-                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBGenericText keepend
-                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBGenericText keepend
+                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
+                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
 
-                        " Inner content matching
-                        syntax match IPYNBGenericText /.*/ contained
+                        " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
+                        syntax match IPYNBMarkdownText /.*/ contained
+                        syntax match IPYNBRawText /.*/ contained
 
-                        " Highlight tags (dark gray)
-                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240
+                        " Tag highlighting (dark gray, italic)
+                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
 
-                        " Highlight content (bright white)
-                        highlight IPYNBGenericText guifg=#ffffff ctermfg=231
-                        highlight IPYNBOutputText guifg=#ffffff ctermfg=231
+                        " Content highlighting
+                        highlight IPYNBOutputText gui=NONE cterm=NONE
+                        highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
+                        highlight IPYNBRawText guifg=#dddddd ctermfg=252
                     ]])
                 end)
             end,
@@ -177,29 +179,32 @@ return {
 
                         " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
-                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBGenericText keepend
-                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBGenericText keepend
+                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
+                        syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
 
-                        " Generic content
-                        syntax match IPYNBGenericText /.*/ contained
+                        " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
+                        syntax match IPYNBMarkdownText /.*/ contained
+                        syntax match IPYNBRawText /.*/ contained
 
-                        " Tag highlighting (dark gray)
-                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240
-                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240
+                        " Tag highlighting (dark gray, italic)
+                        highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
+                        highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
 
-                        " Content highlighting (bright white)
-                        highlight IPYNBGenericText guifg=#ffffff ctermfg=231
-                        highlight IPYNBOutputText guifg=#ffffff ctermfg=231
+                        " Content highlighting
+                        highlight IPYNBOutputText gui=NONE cterm=NONE
+                        highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
+                        highlight IPYNBRawText guifg=#dddddd ctermfg=252
                     ]])
                 end)
             end,
         })
     end,
 }
+
 
 
 
