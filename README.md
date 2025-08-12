@@ -1,9 +1,10 @@
 # Volcano
 
-Volcano is a fork of [Molten](https://github.com/benlubas/molten-nvim), a plugin for running code
-interactively with the jupyter kernel. Volcano is a work in progress.
+Neovim plugin for running code interactively with the Jupyter kernel.
 
-## Work in Progress, the following is for development.
+# This project is a *work in progress*.
+
+## The following is for development.
 
 ### 🌐 Live Version
 Create '~/.config/nvim/lua/plugins/volcano.lua':
@@ -12,6 +13,8 @@ return {
     "devbyte1328/volcano-nvim",
     version = "^1.0.0", -- use version <2.0.0 to avoid breaking changes
     build = ":UpdateRemotePlugins",
+    dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.nvim' },
+    opts = {},
     config = function()
         -- Set up Python provider to use local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
@@ -172,6 +175,8 @@ return {
     dir = vim.fn.stdpath("config") .. "/lua/local_plugins/volcano-nvim",
     name = "volcano-nvim",
     build = ":UpdateRemotePlugins",
+    dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.nvim' },
+    opts = {},
     config = function()
         -- Set up Python provider to use local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
@@ -304,3 +309,8 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 ```
+
+## Credits
+
+- [Molten](https://github.com/benlubas/molten-nvim): Original fork, GPL-licensed, basis for project.
+- [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim): Core function copied and modified for specific use case.
