@@ -454,30 +454,27 @@ class Molten:
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = queue.Queue()
-
         class StreamingStdout:
             def write(self, text):
                 for line in text.rstrip().splitlines():
                     output_queue.put(line)
             def flush(self): pass
-
         def run_eval():
             local_stdout = sys.stdout
             sys.stdout = StreamingStdout()
-
+            error_occurred = False
             try:
-                full_expr = f"{expr}\nimport time\ntime.sleep(0.16)"  # Don't ask questions.
+                full_expr = f"{expr}\nimport time\ntime.sleep(0.16)"
                 globals_ = self.global_namespaces.setdefault(bufnr, {})
                 exec(full_expr, globals_)
             except Exception:
+                error_occurred = True
                 tb = traceback.format_exc()
-                output_queue.put("Error:")
                 for line in tb.strip().splitlines():
                     output_queue.put(line)
             finally:
                 sys.stdout = local_stdout
-                output_queue.put(None)
-
+                output_queue.put((None, error_occurred))
         def update_output_block(lines_so_far):
             def _do_update():
                 try:
@@ -492,33 +489,26 @@ class Molten:
                         elif found_output and line == "</output>":
                             out_end = i
                             break
-
                     if out_start is not None and out_end is not None:
                         buf.api.set_lines(out_start + 1, out_end, False, lines_so_far)
                         self.nvim.command("undojoin")
                 except Exception as e:
                     notify_error(self.nvim, f"Stream update error: {e}")
-
             self.nvim.async_call(_do_update)
-
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         last_update_time = 0
         update_interval = 0.3
-
         update_output_block(lines_so_far)
-
         if delay:
-            time.sleep(0.5) 
-
-        start_time = time.time() 
-
+            time.sleep(0.5)
+        start_time = time.time()
         eval_thread = threading.Thread(target=run_eval)
         eval_thread.start()
-
         while True:
             try:
                 item = output_queue.get(timeout=0.01)
-                if item is None:
+                if isinstance(item, tuple) and item[0] is None:
+                    error_occurred = item[1]
                     break
                 lines_so_far.append(item)
                 elapsed = time.time() - start_time
@@ -534,11 +524,9 @@ class Molten:
                 if now - last_update_time > update_interval:
                     update_output_block(lines_so_far)
                     last_update_time = now
-
-        # Final update to ensure output is flushed and status is Done
-        elapsed = time.time() - start_time - 0.16  # Don't ask questions.
+        elapsed = time.time() - start_time - 0.16
         elapsed = max(0, elapsed)
-        lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+        lines_so_far[0] = f"[{eval_id}][{'Error' if error_occurred else 'Done'}] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
 
 
