@@ -87,6 +87,7 @@ return {
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
 
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -102,6 +103,7 @@ return {
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
+                        highlight IPYNBEvalError guifg=red ctermfg=196
                     ]])
                 end)
             end,
@@ -245,6 +247,7 @@ return {
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
 
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -260,6 +263,7 @@ return {
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
+                        highlight IPYNBEvalError guifg=red ctermfg=196
                     ]])
                 end)
             end,
