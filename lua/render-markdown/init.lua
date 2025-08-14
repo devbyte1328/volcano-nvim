@@ -1,6 +1,5 @@
 ---@class render.md.Init: render.md.Api
 local M = {}
-
 ---@class (exact) render.md.Config: render.md.partial.Config
 ---@field preset render.md.config.Preset
 ---@field log_level render.md.log.Level
@@ -14,7 +13,6 @@ local M = {}
 ---@field completions render.md.completions.Config
 ---@field overrides render.md.overrides.Config
 ---@field custom_handlers table<string, render.md.Handler>
-
 ---@class (exact) render.md.partial.Config: render.md.base.Config
 ---@field max_file_size number
 ---@field debounce integer
@@ -37,11 +35,9 @@ local M = {}
 ---@field quote render.md.quote.Config
 ---@field sign render.md.sign.Config
 ---@field win_options render.md.window.Configs
-
 ---@private
 ---@type boolean
 M.initialized = false
-
 ---@type render.md.Config
 M.default = {
     -- Whether markdown should be rendered by default.
@@ -58,9 +54,9 @@ M.default = {
     debounce = 100,
     -- Pre configured settings that will attempt to mimic various target user experiences.
     -- User provided settings will take precedence.
-    -- | obsidian | mimic Obsidian UI                                          |
-    -- | lazy     | will attempt to stay up to date with LazyVim configuration |
-    -- | none     | does nothing                                               |
+    -- | obsidian | mimic Obsidian UI |
+    -- | lazy | will attempt to stay up to date with LazyVim configuration |
+    -- | none | does nothing |
     preset = 'none',
     -- The level of logs to write to file: vim.fn.stdpath('state') .. '/render-markdown.log'.
     -- Only intended to be used for plugin development / debugging.
@@ -102,7 +98,6 @@ M.default = {
     overrides = require('render-markdown.config.overrides').default,
     custom_handlers = require('render-markdown.config.handlers').default,
 }
-
 ---@param opts? render.md.UserConfig
 function M.setup(opts)
     -- This handles discrepancies in initialization order of different plugin managers, some
@@ -116,8 +111,14 @@ function M.setup(opts)
     M.initialized = true
     local config = M.resolve_config(opts or {})
     require('render-markdown.state').setup(config)
+    -- Force "*.ipynb_interpreted" to use markdown filetype
+    vim.api.nvim_create_autocmd({"BufRead", "BufNewFile"}, {
+        pattern = "*.ipynb_interpreted",
+        callback = function()
+            vim.bo.filetype = "markdown"
+        end,
+    })
 end
-
 ---@private
 ---@param user render.md.UserConfig
 ---@return render.md.Config
@@ -142,7 +143,6 @@ function M.resolve_config(user)
     end
     return config
 end
-
 return setmetatable(M, {
     __index = function(_, key)
         -- Allows API methods to be accessed from top level

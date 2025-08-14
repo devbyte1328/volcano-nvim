@@ -38,7 +38,7 @@ return {
 
         -- Auto-run :SaveIPYNB after saving interpreted notebook files
         vim.api.nvim_create_autocmd("BufWritePost", {
-            pattern = "*.ipynb.interpreted",
+            pattern = "*.ipynb_interpreted",
             callback = function()
                 vim.cmd("SaveIPYNB")
             end,
@@ -47,13 +47,13 @@ return {
         -- Register custom filetype
         vim.filetype.add({
             extension = {
-                ["ipynb.interpreted"] = "ipynb_interpreted",
+                ["ipynb_interpreted"] = "ipynb_interpreted",
             },
         })
 
         -- Manually enforce filetype
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
-            pattern = "*.ipynb.interpreted",
+            pattern = "*.ipynb_interpreted",
             command = "set filetype=ipynb_interpreted",
         })
 
@@ -200,7 +200,7 @@ return {
 
         -- Auto-run :SaveIPYNB after saving interpreted notebook files
         vim.api.nvim_create_autocmd("BufWritePost", {
-            pattern = "*.ipynb.interpreted",
+            pattern = "*.ipynb_interpreted",
             callback = function()
                 vim.cmd("SaveIPYNB")
             end,
@@ -209,13 +209,13 @@ return {
         -- Register custom filetype
         vim.filetype.add({
             extension = {
-                ["ipynb.interpreted"] = "ipynb_interpreted",
+                ["ipynb_interpreted"] = "ipynb_interpreted",
             },
         })
 
         -- Manually enforce filetype
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
-            pattern = "*.ipynb.interpreted",
+            pattern = "*.ipynb_interpreted",
             command = "set filetype=ipynb_interpreted",
         })
 

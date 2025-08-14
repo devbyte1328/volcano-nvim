@@ -558,7 +558,7 @@ class Molten:
                     checkpoint_dir = os.path.join(dirname, ".ipynb_checkpoints")
                     os.makedirs(checkpoint_dir, exist_ok=True)
 
-                    interpreted_path = os.path.join(checkpoint_dir, f"{basename}.interpreted")
+                    interpreted_path = os.path.join(checkpoint_dir, f"{basename}_interpreted")
 
                     # Write as interpreted Python script
                     with open(interpreted_path, "w", encoding="utf-8") as f_out:
@@ -656,14 +656,14 @@ class Molten:
     def command_save_ipynb(self, args: List[str]) -> None:
         filename = self.nvim.current.buffer.name
 
-        if not filename.endswith(".ipynb.interpreted"):
+        if not filename.endswith(".ipynb_interpreted"):
             self.nvim.command("echoerr 'Not an interpreted .ipynb file'")
             return
 
         try:
             # Reconstruct original .ipynb path
             checkpoint_dir = os.path.dirname(filename)
-            basename = os.path.basename(filename).replace(".ipynb.interpreted", ".ipynb")
+            basename = os.path.basename(filename).replace(".ipynb_interpreted", ".ipynb")
             original_ipynb_path = os.path.join(os.path.dirname(checkpoint_dir), basename)
 
             with open(original_ipynb_path, "r", encoding="utf-8") as f:
