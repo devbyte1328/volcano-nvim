@@ -13,13 +13,13 @@ return {
     "devbyte1328/volcano-nvim",
     version = "^1.0.0", -- use version <2.0.0 to avoid breaking changes
     build = ":UpdateRemotePlugins",
-    dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.nvim' },
+    dependencies = { "nvim-treesitter/nvim-treesitter", "echasnovski/mini.nvim" },
     opts = {},
     config = function()
-        -- Set up Python provider to use local venv
+        -- Python provider: local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
 
-        -- Ensure Jupyter runtime directory exists
+        -- Ensure Jupyter runtime dir
         local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
         if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
             vim.fn.mkdir(jupyter_runtime_dir, "p")
@@ -28,7 +28,7 @@ return {
         -- Molten config
         vim.g.molten_output_win_max_height = 12
 
-        -- Auto-run :VolcanoInit if opening a .ipynb file
+        -- Auto-run :VolcanoInit on .ipynb open
         vim.api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
             callback = function()
@@ -44,23 +44,72 @@ return {
             end,
         })
 
-        -- Register custom filetype
-        vim.filetype.add({
-            extension = {
-                ["ipynb_interpreted"] = "ipynb_interpreted",
-            },
-        })
+        -------------------------------------------------------------------------
+        -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
+        -- Anywhere else in your config. This block *forces* markdown for that
+        -- extension, even if a plugin or modeline tries to change it later.
+        -------------------------------------------------------------------------
+        local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
 
-        -- Manually enforce filetype
+        local function force_markdown(buf)
+            if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
+            local name = vim.api.nvim_buf_get_name(buf)
+            if name:match("%.ipynb_interpreted$") and vim.bo[buf].filetype ~= "markdown" then
+                -- setfiletype avoids re-triggering detection loops
+                vim.api.nvim_buf_call(buf, function()
+                    vim.cmd("setfiletype markdown")
+                end)
+            end
+        end
+
+        -- On open/create of those files
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+            group = grp,
             pattern = "*.ipynb_interpreted",
-            command = "set filetype=ipynb_interpreted",
+            callback = function(args)
+                force_markdown(args.buf)
+                -- Defer once more to beat late plugins/modelines
+                vim.defer_fn(function() force_markdown(args.buf) end, 0)
+            end,
         })
 
-        -- Syntax highlighting for ipynb_interpreted
+        -- If any plugin flips filetype later
         vim.api.nvim_create_autocmd("FileType", {
-            pattern = "ipynb_interpreted",
+            group = grp,
+            pattern = "*",
+            callback = function(args)
+                force_markdown(args.buf)
+            end,
+        })
+
+        -- If the 'filetype' option changes for any reason
+        vim.api.nvim_create_autocmd("OptionSet", {
+            group = grp,
+            pattern = "filetype",
             callback = function()
+                local buf = vim.api.nvim_get_current_buf()
+                force_markdown(buf)
+            end,
+        })
+
+        -- When entering the window (catches some late-setters)
+        vim.api.nvim_create_autocmd("BufEnter", {
+            group = grp,
+            pattern = "*.ipynb_interpreted",
+            callback = function(args)
+                force_markdown(args.buf)
+            end,
+        })
+
+
+        -- syntax color for interpreted file
+        -- ends with .ipynb_interpreted (still uses markdown ft)
+        vim.api.nvim_create_autocmd("FileType", {
+            group = vim.api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
+            pattern = "markdown",
+            callback = function(args)
+                local bufname = vim.api.nvim_buf_get_name(args.buf)
+                if not bufname:match("%.ipynb_interpreted$") then return end
                 vim.schedule(function()
                     vim.cmd([[
                         " Match tags
@@ -175,13 +224,13 @@ return {
     dir = vim.fn.stdpath("config") .. "/lua/local_plugins/volcano-nvim",
     name = "volcano-nvim",
     build = ":UpdateRemotePlugins",
-    dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.nvim' },
+    dependencies = { "nvim-treesitter/nvim-treesitter", "echasnovski/mini.nvim" },
     opts = {},
     config = function()
-        -- Set up Python provider to use local venv
+        -- Python provider: local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
 
-        -- Ensure Jupyter runtime directory exists
+        -- Ensure Jupyter runtime dir
         local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
         if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
             vim.fn.mkdir(jupyter_runtime_dir, "p")
@@ -190,7 +239,7 @@ return {
         -- Molten config
         vim.g.molten_output_win_max_height = 12
 
-        -- Auto-run :VolcanoInit if opening a .ipynb file
+        -- Auto-run :VolcanoInit on .ipynb open
         vim.api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
             callback = function()
@@ -206,23 +255,72 @@ return {
             end,
         })
 
-        -- Register custom filetype
-        vim.filetype.add({
-            extension = {
-                ["ipynb_interpreted"] = "ipynb_interpreted",
-            },
-        })
+        -------------------------------------------------------------------------
+        -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
+        -- Anywhere else in your config. This block *forces* markdown for that
+        -- extension, even if a plugin or modeline tries to change it later.
+        -------------------------------------------------------------------------
+        local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
 
-        -- Manually enforce filetype
+        local function force_markdown(buf)
+            if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
+            local name = vim.api.nvim_buf_get_name(buf)
+            if name:match("%.ipynb_interpreted$") and vim.bo[buf].filetype ~= "markdown" then
+                -- setfiletype avoids re-triggering detection loops
+                vim.api.nvim_buf_call(buf, function()
+                    vim.cmd("setfiletype markdown")
+                end)
+            end
+        end
+
+        -- On open/create of those files
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+            group = grp,
             pattern = "*.ipynb_interpreted",
-            command = "set filetype=ipynb_interpreted",
+            callback = function(args)
+                force_markdown(args.buf)
+                -- Defer once more to beat late plugins/modelines
+                vim.defer_fn(function() force_markdown(args.buf) end, 0)
+            end,
         })
 
-        -- Syntax highlighting for ipynb_interpreted
+        -- If any plugin flips filetype later
         vim.api.nvim_create_autocmd("FileType", {
-            pattern = "ipynb_interpreted",
+            group = grp,
+            pattern = "*",
+            callback = function(args)
+                force_markdown(args.buf)
+            end,
+        })
+
+        -- If the 'filetype' option changes for any reason
+        vim.api.nvim_create_autocmd("OptionSet", {
+            group = grp,
+            pattern = "filetype",
             callback = function()
+                local buf = vim.api.nvim_get_current_buf()
+                force_markdown(buf)
+            end,
+        })
+
+        -- When entering the window (catches some late-setters)
+        vim.api.nvim_create_autocmd("BufEnter", {
+            group = grp,
+            pattern = "*.ipynb_interpreted",
+            callback = function(args)
+                force_markdown(args.buf)
+            end,
+        })
+
+
+        -- syntax color for interpreted file
+        -- ends with .ipynb_interpreted (still uses markdown ft)
+        vim.api.nvim_create_autocmd("FileType", {
+            group = vim.api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
+            pattern = "markdown",
+            callback = function(args)
+                local bufname = vim.api.nvim_buf_get_name(args.buf)
+                if not bufname:match("%.ipynb_interpreted$") then return end
                 vim.schedule(function()
                     vim.cmd([[
                         " Match tags
