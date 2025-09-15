@@ -398,3 +398,4 @@ vim.api.nvim_create_autocmd("FileType", {
 
 - [Molten](https://github.com/benlubas/molten-nvim): Original fork, GPL-licensed, basis for project.
 - [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim): Core function copied and modified for specific use case.
+- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter): Used for syntax coloring

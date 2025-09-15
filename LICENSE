@@ -1,3 +1,21 @@
+Contact: devbyte1328@gmail.com
+
+This project includes or derives from third-party code:
+
+1. molten-nvim (GPL-3.0).
+  Source: https://github.com/benlubas/molten-nvim
+  License: https://github.com/benlubas/molten-nvim?tab=GPL-3.0-1-ov-file#readme
+  
+2. render-markdown.nvim (MIT).
+  Source: https://github.com/MeanderingProgrammer/render-markdown.nvim
+  License: https://github.com/MeanderingProgrammer/render-markdown.nvim?tab=MIT-1-ov-file#readme
+
+3. nvim-treesitter (Apache-2.0).
+  Source: https://github.com/nvim-treesitter/nvim-treesitter
+  License: https://github.com/nvim-treesitter/nvim-treesitter?tab=Apache-2.0-1-ov-file#readme
+  
+===============================
+
 GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
