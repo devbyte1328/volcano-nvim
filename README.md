@@ -13,21 +13,30 @@ return {
     "devbyte1328/volcano-nvim",
     version = "^1.0.0", -- use version <2.0.0 to avoid breaking changes
     build = ":UpdateRemotePlugins",
-    dependencies = { "nvim-treesitter/nvim-treesitter", "echasnovski/mini.nvim" },
+    dependencies = {
+        {
+            "nvim-treesitter/nvim-treesitter",
+            build = ":TSUpdate",
+        },
+        "echasnovski/mini.nvim"
+    },
     opts = {},
     config = function()
+        -- Treesitter setup (moved here to make external treesitter.lua redundant)
+        require("nvim-treesitter.configs").setup({
+            ensure_installed = { "lua", "java", "python", "markdown" },
+            highlight = { enable = true },
+            indent = { enable = true },
+        })
         -- Python provider: local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
-
         -- Ensure Jupyter runtime dir
         local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
         if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
             vim.fn.mkdir(jupyter_runtime_dir, "p")
         end
-
         -- Molten config
         vim.g.molten_output_win_max_height = 12
-
         -- Auto-run :VolcanoInit on .ipynb open
         vim.api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
@@ -35,7 +44,6 @@ return {
                 vim.cmd("VolcanoInit")
             end,
         })
-
         -- Auto-run :SaveIPYNB after saving interpreted notebook files
         vim.api.nvim_create_autocmd("BufWritePost", {
             pattern = "*.ipynb_interpreted",
@@ -43,14 +51,12 @@ return {
                 vim.cmd("SaveIPYNB")
             end,
         })
-
         -------------------------------------------------------------------------
         -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
         -- Anywhere else in your config. This block *forces* markdown for that
         -- extension, even if a plugin or modeline tries to change it later.
         -------------------------------------------------------------------------
         local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
-
         local function force_markdown(buf)
             if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
             local name = vim.api.nvim_buf_get_name(buf)
@@ -61,7 +67,6 @@ return {
                 end)
             end
         end
-
         -- On open/create of those files
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             group = grp,
@@ -72,7 +77,6 @@ return {
                 vim.defer_fn(function() force_markdown(args.buf) end, 0)
             end,
         })
-
         -- If any plugin flips filetype later
         vim.api.nvim_create_autocmd("FileType", {
             group = grp,
@@ -81,7 +85,6 @@ return {
                 force_markdown(args.buf)
             end,
         })
-
         -- If the 'filetype' option changes for any reason
         vim.api.nvim_create_autocmd("OptionSet", {
             group = grp,
@@ -91,7 +94,6 @@ return {
                 force_markdown(buf)
             end,
         })
-
         -- When entering the window (catches some late-setters)
         vim.api.nvim_create_autocmd("BufEnter", {
             group = grp,
@@ -100,8 +102,6 @@ return {
                 force_markdown(args.buf)
             end,
         })
-
-
         -- syntax color for interpreted file
         -- ends with .ipynb_interpreted (still uses markdown ft)
         vim.api.nvim_create_autocmd("FileType", {
@@ -121,37 +121,30 @@ return {
                         syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
-
                         " Include Python syntax in code cells
                         syntax include @Python syntax/python.vim
-
                         " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
                         syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
-
                         " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
                         syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
-
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
-
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
-
                         " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
-
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
@@ -223,22 +216,31 @@ Create '~/.config/nvim/lua/plugins/volcano.lua':
 return {
     dir = vim.fn.stdpath("config") .. "/lua/local_plugins/volcano-nvim",
     name = "volcano-nvim",
-    build = ":UpdateRemotePlugins",
-    dependencies = { "nvim-treesitter/nvim-treesitter", "echasnovski/mini.nvim" },
+    dependencies = {
+        {
+            "nvim-treesitter/nvim-treesitter",
+            build = ":TSUpdate",
+        },
+        "echasnovski/mini.nvim"
+    },
     opts = {},
     config = function()
+        -- Treesitter setup (moved here to make external treesitter.lua redundant)
+        require("nvim-treesitter.configs").setup({
+            ensure_installed = { "lua", "java", "python", "markdown" },
+            highlight = { enable = true },
+            indent = { enable = true },
+        })
+
         -- Python provider: local venv
         vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
-
         -- Ensure Jupyter runtime dir
         local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
         if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
             vim.fn.mkdir(jupyter_runtime_dir, "p")
         end
-
         -- Molten config
         vim.g.molten_output_win_max_height = 12
-
         -- Auto-run :VolcanoInit on .ipynb open
         vim.api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
@@ -246,7 +248,6 @@ return {
                 vim.cmd("VolcanoInit")
             end,
         })
-
         -- Auto-run :SaveIPYNB after saving interpreted notebook files
         vim.api.nvim_create_autocmd("BufWritePost", {
             pattern = "*.ipynb_interpreted",
@@ -254,14 +255,12 @@ return {
                 vim.cmd("SaveIPYNB")
             end,
         })
-
         -------------------------------------------------------------------------
         -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
         -- Anywhere else in your config. This block *forces* markdown for that
         -- extension, even if a plugin or modeline tries to change it later.
         -------------------------------------------------------------------------
         local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
-
         local function force_markdown(buf)
             if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
             local name = vim.api.nvim_buf_get_name(buf)
@@ -272,7 +271,6 @@ return {
                 end)
             end
         end
-
         -- On open/create of those files
         vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             group = grp,
@@ -283,7 +281,6 @@ return {
                 vim.defer_fn(function() force_markdown(args.buf) end, 0)
             end,
         })
-
         -- If any plugin flips filetype later
         vim.api.nvim_create_autocmd("FileType", {
             group = grp,
@@ -292,7 +289,6 @@ return {
                 force_markdown(args.buf)
             end,
         })
-
         -- If the 'filetype' option changes for any reason
         vim.api.nvim_create_autocmd("OptionSet", {
             group = grp,
@@ -302,7 +298,6 @@ return {
                 force_markdown(buf)
             end,
         })
-
         -- When entering the window (catches some late-setters)
         vim.api.nvim_create_autocmd("BufEnter", {
             group = grp,
@@ -311,8 +306,6 @@ return {
                 force_markdown(args.buf)
             end,
         })
-
-
         -- syntax color for interpreted file
         -- ends with .ipynb_interpreted (still uses markdown ft)
         vim.api.nvim_create_autocmd("FileType", {
@@ -332,37 +325,30 @@ return {
                         syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
-
                         " Include Python syntax in code cells
                         syntax include @Python syntax/python.vim
-
                         " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
                         syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
-
                         " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
                         syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
-
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
-
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
-
                         " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
-
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
