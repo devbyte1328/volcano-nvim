@@ -24,7 +24,7 @@ return {
     config = function()
         -- Treesitter setup (moved here to make external treesitter.lua redundant)
         require("nvim-treesitter.configs").setup({
-            ensure_installed = { "lua", "java", "python", "markdown" },
+            ensure_installed = { "python", "markdown" },
             highlight = { enable = true },
             indent = { enable = true },
         })
@@ -227,7 +227,7 @@ return {
     config = function()
         -- Treesitter setup (moved here to make external treesitter.lua redundant)
         require("nvim-treesitter.configs").setup({
-            ensure_installed = { "lua", "java", "python", "markdown" },
+            ensure_installed = { "python", "markdown" },
             highlight = { enable = true },
             indent = { enable = true },
         })
