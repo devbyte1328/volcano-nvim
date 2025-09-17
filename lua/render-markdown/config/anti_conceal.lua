@@ -34,7 +34,7 @@ local M = {}
 ---@type render.md.anti.conceal.Config
 M.default = {
     -- This enables hiding added text on the line the cursor is on.
-    enabled = true,
+    enabled = false,
     -- Modes to disable anti conceal feature.
     disabled_modes = false,
     -- Number of lines above cursor to show.
@@ -64,19 +64,22 @@ M.default = {
     },
 }
 
----@param spec render.md.debug.ValidatorSpec
-function M.validate(spec)
-    spec:type('enabled', 'boolean')
-    spec:list('disabled_modes', 'string', 'boolean')
-    spec:type('above', 'number')
-    spec:type('below', 'number')
-    spec:nested('ignore', function(ignore)
-        for _, element in pairs(Element) do
-            ignore:list(element, 'string', { 'boolean', 'nil' })
-        end
-        ignore:check()
-    end)
-    spec:check()
+---@return render.md.Schema
+function M.schema()
+    ---@type render.md.Schema
+    local modes = {
+        union = { { list = { type = 'string' } }, { type = 'boolean' } },
+    }
+    ---@type render.md.Schema
+    return {
+        record = {
+            enabled = { type = 'boolean' },
+            disabled_modes = modes,
+            above = { type = 'number' },
+            below = { type = 'number' },
+            ignore = { map = { { enum = Element }, modes } },
+        },
+    }
 end
 
 return M
