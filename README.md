@@ -125,12 +125,10 @@ return {
                         syntax include @Python syntax/python.vim
                         " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
-                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
                         " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
-                        syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
@@ -143,7 +141,6 @@ return {
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
-                        highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
@@ -329,12 +326,10 @@ return {
                         syntax include @Python syntax/python.vim
                         " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
-                        syntax region IPYNBMarkdownContent start=/^<markdown>$/ end=/^<\/markdown>$/ contains=IPYNBMarkdownText keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
                         " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
-                        syntax match IPYNBMarkdownText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
                         " Status markers inside output
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
@@ -347,7 +342,6 @@ return {
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
-                        highlight IPYNBMarkdownText guifg=#dddddd ctermfg=252
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
                         " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
