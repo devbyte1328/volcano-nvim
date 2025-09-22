@@ -13,6 +13,14 @@ local M = {}
 local NS_FALLBACK = api.nvim_create_namespace('render_markdown_fallback_headings')
 local SIGN_GROUP  = 'RenderMarkdownFallbackHeadings'
 
+-- treat *.ipynb_interpreted buffers specially (colorless but still rendered)
+local function is_ipynb_interpreted_buf(buf)
+  if not buf or not api.nvim_buf_is_valid(buf) then return false end
+  local ok, name = pcall(api.nvim_buf_get_name, buf)
+  if not ok or not name then return false end
+  return name:match("%.ipynb_interpreted$")
+end
+
 ---@param ctx render.md.handler.Context
 ---@return render.md.Mark[]
 function M.parse(ctx)
@@ -86,6 +94,9 @@ function M.parse(ctx)
       return (line or ''):match('^%s*<markdown>%s*$') ~= nil
     end
 
+    -- color-neutral mode for interpreted notebooks (render icons, no colors)
+    local colorless = is_ipynb_interpreted_buf(ctx.buf)
+
     for row = 0, total - 1 do
       -- Skip rows already rendered by TS
       if not ts_heading_rows[row] then
@@ -102,8 +113,8 @@ function M.parse(ctx)
             local fg = list.clamp(cfg.foregrounds, lvl)
             local bg = list.clamp(cfg.backgrounds, lvl)
 
-            -- 1) Background across the whole line (fallback namespace)
-            if bg then
+            -- 1) Background across the whole line: DISABLED in colorless mode
+            if bg and not colorless then
               api.nvim_buf_set_extmark(ctx.buf, NS_FALLBACK, row, 0, {
                 end_row = row + 1,   -- full line
                 hl_group = bg,
@@ -117,19 +128,18 @@ function M.parse(ctx)
             local text_start = #prefix
             if text_start > #cur then text_start = #cur end
 
-            -- 2) Conceal only the leading hashes (+ optional space) — same-line range
+            -- 2) Conceal only the leading hashes (+ optional space) — keep always
             if text_start > 0 then
               api.nvim_buf_set_extmark(ctx.buf, NS_FALLBACK, row, 0, {
-                end_row = row,       -- SAME LINE range
+                end_row = row,        -- SAME LINE range
                 end_col = text_start, -- exclusive
                 conceal = '',
                 priority = 100,
               })
             end
 
-            -- 3) Apply foreground highlight to the heading *text* (after the prefix)
-            --    This makes the first heading colored like normal TS headings.
-            if fg and text_start < #cur then
+            -- 3) Foreground highlight of heading text: DISABLED in colorless mode
+            if fg and text_start < #cur and not colorless then
               api.nvim_buf_set_extmark(ctx.buf, NS_FALLBACK, row, text_start, {
                 end_row = row,
                 end_col = #cur,
@@ -138,26 +148,26 @@ function M.parse(ctx)
               })
             end
 
-            -- 4) Inline icon at BOL (fallback namespace)
+            -- 4) Inline icon at BOL — keep ALWAYS; drop its color in colorless mode
             if inline_icon then
-              local vt_hl = fg or bg or ''
+              local vt_hl = (not colorless) and (fg or bg or '') or nil
               api.nvim_buf_set_extmark(ctx.buf, NS_FALLBACK, row, 0, {
-                virt_text = { { inline_icon, vt_hl } },
+                virt_text = { { inline_icon, vt_hl } }, -- colors.lua strips vt_hl for ipynb anyway
                 virt_text_pos = 'inline',
                 priority = 110,
               })
             end
 
-            -- 5) Optional sign in signcolumn (single group so we can clear it)
+            -- 5) Optional sign in signcolumn — keep ALWAYS; drop its color in colorless mode
             if cfg.sign and sign_icon then
-              local sign_hl_group = fg or ''
               local sign_name = ('RenderMarkdownHeading%d'):format(lvl)
+              local sign_opts = { text = sign_icon }
+              if not colorless then
+                if fg then sign_opts.texthl = fg end
+                if bg then sign_opts.linehl = bg end
+              end
               -- Define (safe if already exists)
-              pcall(vim.fn.sign_define, sign_name, {
-                text = sign_icon,
-                texthl = sign_hl_group,
-                linehl = bg, -- matches background if provided
-              })
+              pcall(vim.fn.sign_define, sign_name, sign_opts)
               -- Deterministic per-line id (1-based for Vim)
               local sign_id = row + 1
               vim.fn.sign_place(sign_id, SIGN_GROUP, sign_name, ctx.buf, {
