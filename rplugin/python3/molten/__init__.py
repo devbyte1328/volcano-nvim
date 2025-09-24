@@ -346,6 +346,82 @@ class Molten:
 
 
 
+
+
+    def _create_cell(self, direction: str) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
+        notify_error(self.nvim, f"{cursor_row - 1} | {buf[cursor_row - 1]}")
+
+        tag_order = ["<cell>", "<markdown>", "<raw>"]
+        closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
+
+        def create_cell(row: int, direction: str):
+            opening_tag, closing_tag = "<cell>", "</cell>"
+
+            if direction == "upward":
+                search_row = row - 1
+                while search_row >= 0:
+                    if buf[search_row].strip() in closing_tag_order:
+                        insert_at = search_row + 1
+                        buf.append(opening_tag, insert_at)
+                        buf.append("", insert_at + 1)       # empty line inside
+                        buf.append(closing_tag, insert_at + 2)
+                        buf.append("", insert_at + 3)       # empty line after
+                        return
+                    search_row -= 1
+                # No closing tag found → insert above cursor
+                buf.append(opening_tag, row)
+                buf.append("", row + 1)
+                buf.append(closing_tag, row + 2)
+                buf.append("", row + 3)
+
+            elif direction == "downward":
+                search_row = row
+                while search_row < len(buf):
+                    if buf[search_row].strip() in tag_order:
+                        insert_at = search_row
+                        buf.append(opening_tag, insert_at)
+                        buf.append("", insert_at + 1)
+                        buf.append(closing_tag, insert_at + 2)
+                        buf.append("", insert_at + 3)
+                        return
+                    search_row += 1
+                # No opening tag found → insert below cursor
+                buf.append(opening_tag, row + 1)
+                buf.append("", row + 2)
+                buf.append(closing_tag, row + 3)
+                buf.append("", row + 4)
+
+        def run():
+            row = cursor_row - 1
+            create_cell(row, direction)
+
+        self.nvim.async_call(run)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _evaluate_cell(self, delay: bool = False):
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
@@ -1282,7 +1358,15 @@ class Molten:
         self._switch_cell_type(direction="backward")
 
 
+    @pynvim.command("VolcanoCreateCellUpward", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_create_cell_upward(self, args: List[str]) -> None:
+        self._create_cell(direction="upward")
 
+    @pynvim.command("VolcanoCreateCellDownward", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_create_cell_downward(self, args: List[str]) -> None:
+        self._create_cell(direction="downward")
 
 
 
