@@ -347,59 +347,81 @@ class Molten:
 
 
 
-
     def _create_cell(self, direction: str) -> None:
         buf = self.nvim.current.buffer
         cursor_row = self.nvim.current.window.cursor[0]
-        notify_error(self.nvim, f"{cursor_row - 1} | {buf[cursor_row - 1]}")
-
         tag_order = ["<cell>", "<markdown>", "<raw>"]
         closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
-        def create_cell(row: int, direction: str):
-            opening_tag, closing_tag = "<cell>", "</cell>"
+        def insert_new_cell_after(row: int, with_leading_empty: bool = True) -> int:
+            if with_leading_empty:
+                buf.append("", row)
+                buf.append("</cell>", row)
+                buf.append("", row)
+                buf.append("<cell>", row)
+                empty_line_offset = 3 
+            else:
+                buf.append("</cell>", row)
+                buf.append("", row)
+                buf.append("<cell>", row)
+                empty_line_offset = 3 
+            return row - 1 + empty_line_offset
 
+        def find_insert_row_upward(start_row: int) -> int | None:
+            row = start_row
+            while row >= 0:
+                if buf[row] in tag_order:
+                    return row
+                row -= 1
+            return None
+
+        def find_insert_row_downward(start_row: int) -> int | None:
+            row = start_row
+            last_row = len(buf) - 1
+            while row <= last_row:
+                if buf[row] in closing_tag_order:
+                    return row
+                row += 1
+            return None
+
+        def create_cell(start_row: int, direction: str):
+            last_row = len(buf) - 1
             if direction == "upward":
-                search_row = row - 1
-                while search_row >= 0:
-                    if buf[search_row].strip() in closing_tag_order:
-                        insert_at = search_row + 1
-                        buf.append(opening_tag, insert_at)
-                        buf.append("", insert_at + 1)       # empty line inside
-                        buf.append(closing_tag, insert_at + 2)
-                        buf.append("", insert_at + 3)       # empty line after
-                        return
-                    search_row -= 1
-                # No closing tag found → insert above cursor
-                buf.append(opening_tag, row)
-                buf.append("", row + 1)
-                buf.append(closing_tag, row + 2)
-                buf.append("", row + 3)
-
+                row = start_row
+                if row == 0:
+                    if buf[row] in tag_order:
+                        empty_line = insert_new_cell_after(row, with_leading_empty=True)
+                        self.nvim.current.window.cursor = (empty_line, 0)
+                    elif buf[row] == "":
+                        empty_line = insert_new_cell_after(row, with_leading_empty=False)
+                        self.nvim.current.window.cursor = (empty_line, 0)
+                    return
+                # For row > 0
+                insert_row = find_insert_row_upward(row)
+                if insert_row is not None:
+                    empty_line = insert_new_cell_after(insert_row, with_leading_empty=True)
+                    self.nvim.current.window.cursor = (empty_line, 0)
             elif direction == "downward":
-                search_row = row
-                while search_row < len(buf):
-                    if buf[search_row].strip() in tag_order:
-                        insert_at = search_row
-                        buf.append(opening_tag, insert_at)
-                        buf.append("", insert_at + 1)
-                        buf.append(closing_tag, insert_at + 2)
-                        buf.append("", insert_at + 3)
-                        return
-                    search_row += 1
-                # No opening tag found → insert below cursor
-                buf.append(opening_tag, row + 1)
-                buf.append("", row + 2)
-                buf.append(closing_tag, row + 3)
-                buf.append("", row + 4)
+                row = start_row
+                if row == last_row:
+                    if buf[row] in closing_tag_order:
+                        empty_line = insert_new_cell_after(row, with_leading_empty=True)
+                        self.nvim.current.window.cursor = (empty_line, 0)
+                    elif buf[row] == "":
+                        empty_line = insert_new_cell_after(row, with_leading_empty=False)
+                        self.nvim.current.window.cursor = (empty_line, 0)
+                    return
+                # For row < last_row
+                insert_row = find_insert_row_downward(row)
+                if insert_row is not None:
+                    empty_line = insert_new_cell_after(insert_row, with_leading_empty=True)
+                    self.nvim.current.window.cursor = (empty_line, 0)
 
         def run():
             row = cursor_row - 1
             create_cell(row, direction)
 
         self.nvim.async_call(run)
-
-
 
 
 
