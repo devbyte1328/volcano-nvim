@@ -353,37 +353,32 @@ class Molten:
         tag_order = ["<cell>", "<markdown>", "<raw>"]
         closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
+        def append_cell_block_pos_cursor(row: int, direction: str):
+            if direction == "upward":
+                buf.append("", row)
+            buf.append("</cell>", row)
+            buf.append("", row)
+            buf.append("<cell>", row)
+            if direction == "downward":
+                buf.append("", row)
+            self.nvim.current.window.cursor = (row + 2, 0)
+
         def create_cell(row: int, direction: str):
             opening_tag, closing_tag = "<cell>", "</cell>"
             if direction == "upward":
                 if row == 0:
                     if buf[row] in tag_order:
-                        buf.append("", row)
-                        buf.append("</cell>", row)
-                        buf.append("", row)
-                        buf.append("<cell>", row)
-                        self.nvim.current.window.cursor = (row + 2, 0)
+                        append_cell_block_pos_cursor(row, direction)
                     elif buf[row] == "":
-                        buf.append("</cell>", row)
-                        buf.append("", row)
-                        buf.append("<cell>", row)
-                        self.nvim.current.window.cursor = (row + 2, 0)
+                        append_cell_block_pos_cursor(row)
                 elif row > 0:
                     if buf[row] in tag_order:
-                        buf.append("", row)
-                        buf.append("</cell>", row)
-                        buf.append("", row)
-                        buf.append("<cell>", row)
-                        self.nvim.current.window.cursor = (row + 2, 0)
+                        append_cell_block_pos_cursor(row, direction)
                     elif buf[row] not in tag_order:
                         while row > 0:
                             row -= 1
                             if buf[row] in tag_order:
-                                buf.append("", row)
-                                buf.append("</cell>", row)
-                                buf.append("", row)
-                                buf.append("<cell>", row)
-                                self.nvim.current.window.cursor = (row + 2, 0)
+                                append_cell_block_pos_cursor(row, direction)
                                 break
             elif direction == "downward":
                 pass
