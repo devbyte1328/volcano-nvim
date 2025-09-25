@@ -347,49 +347,52 @@ class Molten:
 
 
 
-	def _create_cell(self, direction: str) -> None:
-	        buf = self.nvim.current.buffer
-	        cursor_row = self.nvim.current.window.cursor[0]
-	        tag_order = ["<cell>", "<markdown>", "<raw>"]
-	        closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
-	        def create_cell(row: int, direction: str):
-	            opening_tag, closing_tag = "<cell>", "</cell>"
-	            if direction == "upward":
-	                if row == 0:
-	                    if buf[row] in tag_order:
-	                        buf.append("", row)
-	                        buf.append("</cell>", row)
-	                        buf.append("", row)
-	                        buf.append("<cell>", row)
-	                        self.nvim.current.window.cursor = (row + 2, 0)
-	                    elif buf[row] == "":
-	                        buf.append("</cell>", row)
-	                        buf.append("", row)
-	                        buf.append("<cell>", row)
-	                        self.nvim.current.window.cursor = (row + 2, 0)
-	                elif row > 0:
-	                    if buf[row] in tag_order:
-	                        buf.append("", row)
-	                        buf.append("</cell>", row)
-	                        buf.append("", row)
-	                        buf.append("<cell>", row)
-	                        self.nvim.current.window.cursor = (row + 2, 0)
-	                    elif buf[row] not in tag_order:
-	                        while row > 0:
-	                            row -= 1
-	                            if buf[row] in tag_order:
-	                                buf.append("", row)
-	                                buf.append("</cell>", row)
-	                                buf.append("", row)
-	                                buf.append("<cell>", row)
-	                                self.nvim.current.window.cursor = (row + 2, 0)
-	                                break
-	            elif direction == "downward":
-	                pass
-	        def run():
-	            row = cursor_row - 1
-	            create_cell(row, direction)
-	        self.nvim.async_call(run)
+    def _create_cell(self, direction: str) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
+        tag_order = ["<cell>", "<markdown>", "<raw>"]
+        closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
+
+        def create_cell(row: int, direction: str):
+            opening_tag, closing_tag = "<cell>", "</cell>"
+            if direction == "upward":
+                if row == 0:
+                    if buf[row] in tag_order:
+                        buf.append("", row)
+                        buf.append("</cell>", row)
+                        buf.append("", row)
+                        buf.append("<cell>", row)
+                        self.nvim.current.window.cursor = (row + 2, 0)
+                    elif buf[row] == "":
+                        buf.append("</cell>", row)
+                        buf.append("", row)
+                        buf.append("<cell>", row)
+                        self.nvim.current.window.cursor = (row + 2, 0)
+                elif row > 0:
+                    if buf[row] in tag_order:
+                        buf.append("", row)
+                        buf.append("</cell>", row)
+                        buf.append("", row)
+                        buf.append("<cell>", row)
+                        self.nvim.current.window.cursor = (row + 2, 0)
+                    elif buf[row] not in tag_order:
+                        while row > 0:
+                            row -= 1
+                            if buf[row] in tag_order:
+                                buf.append("", row)
+                                buf.append("</cell>", row)
+                                buf.append("", row)
+                                buf.append("<cell>", row)
+                                self.nvim.current.window.cursor = (row + 2, 0)
+                                break
+            elif direction == "downward":
+                pass
+
+        def run():
+            row = cursor_row - 1
+            create_cell(row, direction)
+
+        self.nvim.async_call(run)
 
 
 
