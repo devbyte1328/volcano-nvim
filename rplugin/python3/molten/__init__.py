@@ -353,15 +353,29 @@ class Molten:
         tag_order = ["<cell>", "<markdown>", "<raw>"]
         closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
-        def append_cell_block_pos_cursor(row: int, direction: str):
+        def append_cell_block_pos_cursor(row: int, direction: str, empty_line=False):
+            #notify_error(self.nvim, f"Detected closing tag order")
             if direction == "upward":
-                buf.append("", row)
-            buf.append("</cell>", row)
-            buf.append("", row)
-            buf.append("<cell>", row)
-            if direction == "downward":
-                buf.append("", row)
-            self.nvim.current.window.cursor = (row + 2, 0)
+                new_line = 0
+                if empty_line == False:
+                    buf.append("", row + new_line)
+                buf.append("</cell>", row + new_line)
+                buf.append("", row + new_line)
+                buf.append("<cell>", row + new_line)
+                buf.append("", row + new_line)
+
+            elif direction == "downward":
+                new_line = 1
+                if empty_line == False:
+                    buf.append("", row + new_line)
+                    new_line += 1
+                buf.append("<cell>", row + new_line)
+                new_line += 1
+                buf.append("", row + new_line)
+                new_line += 1
+                buf.append("</cell>", row + new_line)
+                new_line += 1
+                buf.append("", row + new_line)
 
         def create_cell(row: int, direction: str):
             opening_tag, closing_tag = "<cell>", "</cell>"
@@ -370,7 +384,7 @@ class Molten:
                     if buf[row] in tag_order:
                         append_cell_block_pos_cursor(row, direction)
                     elif buf[row] == "":
-                        append_cell_block_pos_cursor(row)
+                        append_cell_block_pos_cursor(row, direction, empty_line=True)
                 elif row > 0:
                     if buf[row] in tag_order:
                         append_cell_block_pos_cursor(row, direction)
@@ -381,7 +395,11 @@ class Molten:
                                 append_cell_block_pos_cursor(row, direction)
                                 break
             elif direction == "downward":
-                pass
+                if row == len(buf) - 1:
+                    if buf[row] in closing_tag_order:
+                        append_cell_block_pos_cursor(row, direction)
+                    elif buf[row] == "":
+                        append_cell_block_pos_cursor(row, direction, empty_line=True)
 
         def run():
             row = cursor_row - 1
