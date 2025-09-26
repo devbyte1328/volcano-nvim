@@ -342,11 +342,6 @@ class Molten:
 
         self.nvim.async_call(run)
 
-
-
-
-
-
     def _create_cell(self, direction: str) -> None:
         buf = self.nvim.current.buffer
         cursor_row = self.nvim.current.window.cursor[0]
@@ -388,33 +383,44 @@ class Molten:
                 elif row > 0:
                     if buf[row] in tag_order:
                         append_cell_block_pos_cursor(row, direction)
+                        if buf[row-1] == "":
+                            del buf[row]
                     elif buf[row] not in tag_order:
                         while row > 0:
                             row -= 1
-                            if buf[row] in tag_order:
-                                append_cell_block_pos_cursor(row, direction)
+                            if row == 0:
+                                if buf[row] in tag_order:
+                                    append_cell_block_pos_cursor(row, direction)
+                                elif buf[row] == "":
+                                    append_cell_block_pos_cursor(row, direction, empty_line=True)
                                 break
+
             elif direction == "downward":
                 if row == len(buf) - 1:
                     if buf[row] in closing_tag_order:
                         append_cell_block_pos_cursor(row, direction)
                     elif buf[row] == "":
                         append_cell_block_pos_cursor(row, direction, empty_line=True)
+                elif row < len(buf) - 1:
+                    if buf[row] in closing_tag_order:
+                        append_cell_block_pos_cursor(row, direction)
+                        if buf[row+1] == "":
+                            del buf[row+6]
+                    elif buf[row] not in closing_tag_order:
+                        while row < len(buf) - 1:
+                            row += 1
+                            if row == 0:
+                                if buf[row] in closing_tag_order:
+                                    append_cell_block_pos_cursor(row, direction)
+                                elif buf[row] == "":
+                                    append_cell_block_pos_cursor(row, direction, empty_line=True)
+                                break
 
         def run():
             row = cursor_row - 1
             create_cell(row, direction)
 
         self.nvim.async_call(run)
-
-
-
-
-
-
-
-
-
 
     def _evaluate_cell(self, delay: bool = False):
         buf = self.nvim.current.buffer
