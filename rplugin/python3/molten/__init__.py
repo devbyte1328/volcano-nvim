@@ -348,7 +348,7 @@ class Molten:
         tag_order = ["<cell>", "<markdown>", "<raw>"]
         closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
-        def append_cell_block_pos_cursor(row: int, direction: str, empty_line=False, middle_line=False):
+        def append_cell_block(row: int, direction: str, empty_line=False, middle_line=False):
             #notify_error(self.nvim, f"Detected closing tag order")
             if direction == "upward":
                 new_line = 0
@@ -374,62 +374,72 @@ class Molten:
                 if middle_line == False:
                     buf.append("", row + new_line)
 
+        def find_new_cell(row: int, direction:str):
+            notify_error(self.nvim, f"{self.nvim.current.window.cursor}")
+            #while buf[row] not in closing_tag_order:
+            #    self.nvim.current.window.cursor = row += 1
+
         def create_cell(row: int, direction: str):
             opening_tag, closing_tag = "<cell>", "</cell>"
             if direction == "upward":
                 if row == 0:
                     if buf[row] in tag_order:
-                        append_cell_block_pos_cursor(row, direction)
+                        append_cell_block(row, direction)
+                        self.nvim.current.window.cursor = (row + 3, 0)
                     elif buf[row] == "":
-                        append_cell_block_pos_cursor(row, direction, empty_line=True)
+                        append_cell_block(row, direction, empty_line=True)
+                        self.nvim.current.window.cursor = (row + 3, 0)
                 elif row > 0:
                     if buf[row] in tag_order:
-                        append_cell_block_pos_cursor(row, direction)
-                        if buf[row-1] == "":
-                            del buf[row]
+                        append_cell_block(row, direction, middle_line=True)
+                        self.nvim.current.window.cursor = (row + 2, 0)
                     elif buf[row] not in tag_order:
                         while row > 0:
                             row -= 1
                             if buf[row] in tag_order:
                                 if row >= 2:
-                                    append_cell_block_pos_cursor(row, direction, middle_line=True)
+                                    append_cell_block(row, direction, middle_line=True)
+                                    break
+                                elif buf[row - 1] == "":
+                                    append_cell_block(row, direction, middle_line=True)
                                     break
                                 else:
-                                    append_cell_block_pos_cursor(row, direction)
+                                    append_cell_block(row, direction)
                                     break
                             elif row == 0:
                                 if buf[row] in tag_order:
-                                    append_cell_block_pos_cursor(row, direction)
+                                    append_cell_block(row, direction)
                                 elif buf[row] == "":
-                                    append_cell_block_pos_cursor(row, direction, empty_line=True)
+                                    append_cell_block(row, direction, empty_line=True)
                                 break
 
             elif direction == "downward":
                 if row == len(buf) - 1:
                     if buf[row] in closing_tag_order:
-                        append_cell_block_pos_cursor(row, direction)
+                        append_cell_block(row, direction)
                     elif buf[row] == "":
-                        append_cell_block_pos_cursor(row, direction, empty_line=True)
+                        append_cell_block(row, direction, empty_line=True)
                 elif row < len(buf) - 1:
                     if buf[row] in closing_tag_order:
-                        append_cell_block_pos_cursor(row, direction)
-                        if buf[row+1] == "":
-                            del buf[row+6]
+                        append_cell_block(row, direction, middle_line=True)
+                        self.nvim.current.window.cursor = (row + 4, 0)
                     elif buf[row] not in closing_tag_order:
                         while row < len(buf) - 1:
                             row += 1
                             if buf[row] in closing_tag_order:
                                 if row <= len(buf) - 2:
-                                    append_cell_block_pos_cursor(row, direction, middle_line=True)
+                                    append_cell_block(row, direction, middle_line=True)
                                     break
+                                elif buf[len(buf) - 1] == "":
+                                    append_cell_block(row, direction, middle_line=True)
                                 else:
-                                    append_cell_block_pos_cursor(row, direction)
+                                    append_cell_block(row, direction)
                                     break
                             elif row == len(buf) - 1:
                                 if buf[row] in closing_tag_order:
-                                    append_cell_block_pos_cursor(row, direction)
+                                    append_cell_block(row, direction)
                                 elif buf[row] == "":
-                                    append_cell_block_pos_cursor(row, direction, empty_line=True)
+                                    append_cell_block(row, direction, empty_line=True)
                                 break
 
         def run():
