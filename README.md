@@ -183,6 +183,8 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.keymap.set("n", "<leader>jc", function() vim.cmd("VolcanoDeleteOutputBelow") end)
     vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellTypeForward") end)
     vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end)
+    vim.keymap.set("n", "<Space>cu", function() vim.cmd("VolcanoCreateCellUpward") end)
+    vim.keymap.set("n", "<Space>cd", function() vim.cmd("VolcanoCreateCellDownward") end)
   end,
 })
 ```
@@ -384,6 +386,8 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.keymap.set("n", "<leader>jc", function() vim.cmd("VolcanoDeleteOutputBelow") end)
     vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellTypeForward") end)
     vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end)
+    vim.keymap.set("n", "<Space>cu", function() vim.cmd("VolcanoCreateCellUpward") end)
+    vim.keymap.set("n", "<Space>cd", function() vim.cmd("VolcanoCreateCellDownward") end)
   end,
 })
 ```

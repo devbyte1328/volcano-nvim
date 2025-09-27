@@ -1396,9 +1396,10 @@ class Molten:
     def command_volcano_create_cell_downward(self, args: List[str]) -> None:
         self._create_cell(direction="downward")
 
-
-
-
+    @pynvim.command("VolcanoClearCellOutput", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_clear_cell_output(self, args: List[str]) -> None:
+        pass
 
 
 
