@@ -349,7 +349,6 @@ class Molten:
         closing_tag_order = ["</cell>", "</markdown>", "</raw>"]
 
         def append_cell_block(row: int, direction: str, empty_line=False, middle_line=False):
-            #notify_error(self.nvim, f"Detected closing tag order")
             if direction == "upward":
                 new_line = 0
                 if empty_line == False:
@@ -374,11 +373,6 @@ class Molten:
                 if middle_line == False:
                     buf.append("", row + new_line)
 
-        def find_new_cell(row: int, direction:str):
-            notify_error(self.nvim, f"{self.nvim.current.window.cursor}")
-            #while buf[row] not in closing_tag_order:
-            #    self.nvim.current.window.cursor = row += 1
-
         def create_cell(row: int, direction: str):
             opening_tag, closing_tag = "<cell>", "</cell>"
             if direction == "upward":
@@ -399,9 +393,11 @@ class Molten:
                             if buf[row] in tag_order:
                                 if row >= 2:
                                     append_cell_block(row, direction, middle_line=True)
+                                    self.nvim.current.window.cursor = (row + 2, 0)
                                     break
                                 elif buf[row - 1] == "":
                                     append_cell_block(row, direction, middle_line=True)
+                                    self.nvim.current.window.cursor = (row + 2, 0)
                                     break
                                 else:
                                     append_cell_block(row, direction)
@@ -409,9 +405,11 @@ class Molten:
                             elif row == 0:
                                 if buf[row] in tag_order:
                                     append_cell_block(row, direction)
+                                    break
                                 elif buf[row] == "":
                                     append_cell_block(row, direction, empty_line=True)
-                                break
+                                    self.nvim.current.window.cursor = (row + 2, 0)
+                                    break
 
             elif direction == "downward":
                 if row == len(buf) - 1:
@@ -419,6 +417,7 @@ class Molten:
                         append_cell_block(row, direction)
                     elif buf[row] == "":
                         append_cell_block(row, direction, empty_line=True)
+                        self.nvim.current.window.cursor = (row + 3, 0)
                 elif row < len(buf) - 1:
                     if buf[row] in closing_tag_order:
                         append_cell_block(row, direction, middle_line=True)
@@ -429,9 +428,11 @@ class Molten:
                             if buf[row] in closing_tag_order:
                                 if row <= len(buf) - 2:
                                     append_cell_block(row, direction, middle_line=True)
+                                    self.nvim.current.window.cursor = (row + 4, 0)
                                     break
                                 elif buf[len(buf) - 1] == "":
                                     append_cell_block(row, direction, middle_line=True)
+                                    self.nvim.current.window.cursor = (row + 4, 0)
                                 else:
                                     append_cell_block(row, direction)
                                     break
@@ -440,6 +441,7 @@ class Molten:
                                     append_cell_block(row, direction)
                                 elif buf[row] == "":
                                     append_cell_block(row, direction, empty_line=True)
+                                    self.nvim.current.window.cursor = (row + 4, 0)
                                 break
 
         def run():
