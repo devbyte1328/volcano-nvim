@@ -1399,12 +1399,10 @@ class Molten:
     @pynvim.command("VolcanoClearCellOutput", nargs="*", sync=True)
     @nvimui
     def command_volcano_clear_cell_output(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0] - 1
+
         pass
-
-
-
-
-
 
 
 
