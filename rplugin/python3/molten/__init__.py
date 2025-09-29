@@ -235,16 +235,8 @@ class Molten:
 
         self.molten_kernels[kernel_id] = kernel
 
-
-
-
     def _move_cursor_to(self, win, line):
         win.cursor = (line + 1, 0)
-
-
-
-
-
 
     def _clean_output_blocks(self, lines: List[str]) -> List[str]:
         source = "\n".join(lines)
@@ -257,7 +249,6 @@ class Molten:
             return cleaned.splitlines()
         elif open_tags != close_tags or (open_tags + close_tags) % 2 != 0:
             return False
-
 
     def _switch_cell_type(self, direction: str) -> None:
         buf = self.nvim.current.buffer
@@ -1085,17 +1076,10 @@ class Molten:
         self.nvim.options["operatorfunc"] = "MoltenOperatorfunc"
         self.nvim.feedkeys("g@")
 
-
-
-
-
     @pynvim.command("VolcanoEvaluate", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate(self, args: List[str]) -> None:
         self._evaluate_cell()
-
-
-
 
     @pynvim.command("VolcanoEvaluateAll", nargs="*", sync=True)
     @nvimui
@@ -1135,11 +1119,6 @@ class Molten:
                 time.sleep(0.01)
 
         threading.Thread(target=run, daemon=True).start()
-
-
-
-
-
 
     @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
     @nvimui
@@ -1196,14 +1175,6 @@ class Molten:
 
         self.nvim.async_call(_move_cursor_after_output)
 
-
-
-
-
-
-
-
-
     @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_above(self, args: List[str]) -> None:
@@ -1259,12 +1230,6 @@ class Molten:
 
         threading.Thread(target=run, daemon=True).start()
 
-
-
-
-        
-
-
     @pynvim.command("VolcanoEvaluateBelow", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_below(self, args: List[str]) -> None:
@@ -1303,21 +1268,47 @@ class Molten:
 
         threading.Thread(target=run, daemon=True).start()
 
-
-
-
     @pynvim.command("VolcanoDeleteOutput", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output(self, args: List[str]) -> None:
+        nvim = self.nvim
+        buf = nvim.current.buffer
+        cursor_line = nvim.current.window.cursor[0] - 1
+        lines = buf[:]
+
+        start_idx = None
+        for i in range(cursor_line, len(lines)):
+            if lines[i].strip() == "<output>":
+                start_idx = i
+                break
+        if start_idx is None:
+            return
+
+        end_idx = None
+        for j in range(start_idx + 1, len(lines)):
+            if lines[j].strip() == "</output>":
+                end_idx = j
+                break
+        if end_idx is None:
+            return
+
+        if end_idx + 1 < len(lines) and lines[end_idx + 1].strip() == "":
+            end_idx += 1
+
+        block_lines = lines[start_idx:end_idx + 1]
+        cleaned_block = self._clean_output_blocks(block_lines)
+        buf.api.set_lines(start_idx, end_idx + 1, False, cleaned_block)
+
+    @pynvim.command("VolcanoAllDeleteOutputs", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_all_delete_outputs(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         buf[:] = self._clean_output_blocks(buf[:])
         buf.api.set_lines(len(buf), len(buf), False, [""])
 
-
-
-    @pynvim.command("VolcanoDeleteOutputAbove", nargs="*", sync=True)
+    @pynvim.command("VolcanoDeleteOutputsAbove", nargs="*", sync=True)
     @nvimui
-    def command_volcano_delete_output_above(self, args: List[str]) -> None:
+    def command_volcano_delete_outputs_above(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         cursor_row = self.nvim.current.window.cursor[0]
 
@@ -1340,11 +1331,9 @@ class Molten:
         if new_buf != False:
             buf[0:cursor_row - 1] = self._clean_output_blocks(buf[0:cursor_row - 1])
 
-
-
-    @pynvim.command("VolcanoDeleteOutputBelow", nargs="*", sync=True)
+    @pynvim.command("VolcanoDeleteOutputsBelow", nargs="*", sync=True)
     @nvimui
-    def command_volcano_delete_output_below(self, args: List[str]) -> None:
+    def command_volcano_delete_outputs_below(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_row = self.nvim.current.window.cursor[0]
@@ -1372,8 +1361,6 @@ class Molten:
         cursor_row = self.nvim.current.window.cursor[0]
 
         buf[cursor_row:] = self._clean_output_blocks(buf[cursor_row:])
-
-
 
     @pynvim.command("VolcanoSwitchCellTypeForward", nargs="*", sync=True)
     @nvimui
