@@ -1624,11 +1624,96 @@ class Molten:
 
         self.nvim.async_call(run)
 
-
     @pynvim.command("VolcanoPasteCell", nargs="*", sync=True)
     @nvimui
     def command_volcano_Paste_cell(self, args: List[str]) -> None:
-        pass
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0] - 1  # 0-based
+        total_lines = len(buf)
+
+        def find_tag_block(start_row: int, open_tag: str, close_tag: str):
+            """Find inclusive range for a tag block surrounding the cursor."""
+            open_idx, close_idx = None, None
+
+            # Search upward for opening tag
+            for i in range(start_row, -1, -1):
+                if buf[i].strip() == open_tag:
+                    open_idx = i
+                    break
+
+            # Search downward for closing tag
+            for j in range(start_row, total_lines):
+                if buf[j].strip() == close_tag:
+                    close_idx = j
+                    break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def find_output_block(after_row: int):
+            """Find the next <output> block after a given line index."""
+            open_idx, close_idx = None, None
+
+            for i in range(after_row + 1, total_lines):
+                if buf[i].strip() == "<output>":
+                    open_idx = i
+                    break
+
+            if open_idx is not None:
+                for j in range(open_idx, total_lines):
+                    if buf[j].strip() == "</output>":
+                        close_idx = j
+                        break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def run():
+            try:
+                yank_data = self.nvim.eval('@"')  # unnamed register
+            except Exception:
+                self.nvim.err_write("Failed to read clipboard register.\n")
+                return
+
+            if not yank_data or not isinstance(yank_data, str):
+                self.nvim.err_write("Clipboard is empty or invalid.\n")
+                return
+
+            yank_lines = yank_data.split("\n")
+            if not any("<cell>" in line for line in yank_lines):
+                self.nvim.err_write("Clipboard does not contain a <cell> block.\n")
+                return
+
+            # Find the current cell block
+            cell_block = find_tag_block(cursor_row, "<cell>", "</cell>")
+            if not cell_block:
+                self.nvim.err_write("No <cell> block found under cursor.\n")
+                return
+
+            cell_start, cell_end = cell_block
+            insert_after = cell_end
+
+            # If the current cell has an output, insert after it
+            output_block = find_output_block(cell_end)
+            if output_block:
+                insert_after = output_block[1]
+
+            insert_row = insert_after + 1  # position just after current block
+
+            # Prepare lines: add one blank line above
+            insert_content = [""] + yank_lines
+            if not insert_content[-1].strip():
+                insert_content = insert_content[:-1]  # remove trailing empty line
+
+            # Insert new block
+            buf[insert_row:insert_row] = insert_content
+
+            # Move cursor to start of newly inserted block
+            self.nvim.command(f"normal! {insert_row + 1}G")
+
+        self.nvim.async_call(run)
 
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore

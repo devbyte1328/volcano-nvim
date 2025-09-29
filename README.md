@@ -190,6 +190,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>mcj<CR>", function() vim.cmd("VolcanoMoveCellDownward") end, { desc = "Move cell down" })
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
+	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
   end,
 })
 ```
@@ -398,6 +399,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>mcj<CR>", function() vim.cmd("VolcanoMoveCellDownward") end, { desc = "Move cell down" })
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
+	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
   end,
 })
 ```
