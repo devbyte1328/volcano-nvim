@@ -1299,9 +1299,9 @@ class Molten:
         cleaned_block = self._clean_output_blocks(block_lines)
         buf.api.set_lines(start_idx, end_idx + 1, False, cleaned_block)
 
-    @pynvim.command("VolcanoAllDeleteOutputs", nargs="*", sync=True)
+    @pynvim.command("VolcanoDeleteAllOutputs", nargs="*", sync=True)
     @nvimui
-    def command_volcano_all_delete_outputs(self, args: List[str]) -> None:
+    def command_volcano_delete_all_outputs(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
         buf[:] = self._clean_output_blocks(buf[:])
         buf.api.set_lines(len(buf), len(buf), False, [""])
