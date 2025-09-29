@@ -1590,6 +1590,7 @@ class Molten:
                 return (open_idx, close_idx)
             return None
 
+
         def run():
             cell_block = find_tag_block(cursor_row, "<cell>", "</cell>")
             if not cell_block:
@@ -1599,9 +1600,16 @@ class Molten:
             cell_start, cell_end = cell_block
             final_start, final_end = cell_start, cell_end
 
-            output_block = find_output_block(cell_end)
-            if output_block:
-                final_end = output_block[1]
+            # Search for <output> directly after *this* cell
+            next_line = cell_end + 1
+            while next_line < total_lines and buf[next_line].strip() == "":
+                # skip blank lines between </cell> and <output>
+                next_line += 1
+
+            if next_line < total_lines and buf[next_line].strip() == "<output>":
+                output_block = find_tag_block(next_line, "<output>", "</output>")
+                if output_block:
+                    final_end = output_block[1]
 
             # Move cursor to start
             self.nvim.command(f"normal! {final_start + 1}G")
@@ -1613,7 +1621,14 @@ class Molten:
             # Yank selection
             self.nvim.command("normal! y")
 
+
         self.nvim.async_call(run)
+
+
+    @pynvim.command("VolcanoPasteCell", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_Paste_cell(self, args: List[str]) -> None:
+        pass
 
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore
