@@ -1544,6 +1544,77 @@ class Molten:
 
         self.nvim.async_call(run)
 
+    @pynvim.command("VolcanoCopyCell", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_copy_cell(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0] - 1  # 0-based
+        total_lines = len(buf)
+
+        def find_tag_block(start_row: int, open_tag: str, close_tag: str):
+            """Find inclusive range for a tag block surrounding the cursor."""
+            open_idx, close_idx = None, None
+
+            # Search upward for <cell>
+            for i in range(start_row, -1, -1):
+                if buf[i].strip() == open_tag:
+                    open_idx = i
+                    break
+
+            # Search downward for </cell>
+            for j in range(start_row, total_lines):
+                if buf[j].strip() == close_tag:
+                    close_idx = j
+                    break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def find_output_block(after_row: int):
+            """Find next <output> block (if any) after a given line index."""
+            open_idx, close_idx = None, None
+
+            for i in range(after_row + 1, total_lines):
+                if buf[i].strip() == "<output>":
+                    open_idx = i
+                    break
+
+            if open_idx is not None:
+                for j in range(open_idx, total_lines):
+                    if buf[j].strip() == "</output>":
+                        close_idx = j
+                        break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def run():
+            cell_block = find_tag_block(cursor_row, "<cell>", "</cell>")
+            if not cell_block:
+                self.nvim.err_write("No <cell> block found under cursor.\n")
+                return
+
+            cell_start, cell_end = cell_block
+            final_start, final_end = cell_start, cell_end
+
+            output_block = find_output_block(cell_end)
+            if output_block:
+                final_end = output_block[1]
+
+            # Move cursor to start
+            self.nvim.command(f"normal! {final_start + 1}G")
+            # Enter Visual Line mode
+            self.nvim.command("normal! V")
+            # Move down to end line
+            if final_end > final_start:
+                self.nvim.command(f"normal! {final_end - final_start}j")
+            # Yank selection
+            self.nvim.command("normal! y")
+
+        self.nvim.async_call(run)
+
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore
     def command_reevaluate_all(self) -> None:
