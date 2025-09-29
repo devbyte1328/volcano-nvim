@@ -186,6 +186,8 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>ncj<CR>", function() vim.cmd("VolcanoCreateCellDownward") end, { desc = "Create new cell below" })
 	vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellTypeForward") end, { desc = "Next cell type" })
 	vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end, { desc = "Previous cell type" })
+	vim.keymap.set("n", "<leader>mck<CR>", function() vim.cmd("VolcanoMoveCellUpward") end, { desc = "Move cell up" })
+	vim.keymap.set("n", "<leader>mcj<CR>", function() vim.cmd("VolcanoMoveCellDownward") end, { desc = "Move cell down" })
   end,
 })
 ```
@@ -390,6 +392,8 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>ncj<CR>", function() vim.cmd("VolcanoCreateCellDownward") end, { desc = "Create new cell below" })
 	vim.keymap.set("n", "<leader>.", function() vim.cmd("VolcanoSwitchCellTypeForward") end, { desc = "Next cell type" })
 	vim.keymap.set("n", "<leader>,", function() vim.cmd("VolcanoSwitchCellTypeBackward") end, { desc = "Previous cell type" })
+	vim.keymap.set("n", "<leader>mck<CR>", function() vim.cmd("VolcanoMoveCellUpward") end, { desc = "Move cell up" })
+	vim.keymap.set("n", "<leader>mcj<CR>", function() vim.cmd("VolcanoMoveCellDownward") end, { desc = "Move cell down" })
   end,
 })
 ```

@@ -441,6 +441,83 @@ class Molten:
 
         self.nvim.async_call(run)
 
+    def _move_cell(self, direction: str) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0]
+        total_lines = len(buf)
+
+        def find_cell_boundaries(row: int):
+            """Find <cell> and </cell> boundaries around cursor."""
+            start, end = None, None
+
+            # Find start (<cell>)
+            for i in range(row, -1, -1):
+                if buf[i].strip() == "<cell>":
+                    start = i
+                    break
+
+            # Find end (</cell>)
+            for j in range(row, total_lines):
+                if buf[j].strip() == "</cell>":
+                    end = j
+                    break
+
+            return start, end
+
+        def find_adjacent_cell(direction: str, start: int, end: int):
+            """Find the next cell boundaries above or below."""
+            if direction == "upward":
+                for i in range(start - 1, -1, -1):
+                    if buf[i].strip() == "</cell>":
+                        upper_end = i
+                        # find matching <cell>
+                        for j in range(i, -1, -1):
+                            if buf[j].strip() == "<cell>":
+                                return j, upper_end
+                return None, None
+
+            elif direction == "downward":
+                for i in range(end + 1, total_lines):
+                    if buf[i].strip() == "<cell>":
+                        lower_start = i
+                        # find matching </cell>
+                        for j in range(i, total_lines):
+                            if buf[j].strip() == "</cell>":
+                                return lower_start, j
+                return None, None
+
+        def move_cell(direction: str, start: int, end: int):
+            """Move the cell upward or downward."""
+            cell_lines = buf[start:end + 1]
+
+            if direction == "upward":
+                adj_start, adj_end = find_adjacent_cell("upward", start, end)
+                if adj_start is None:
+                    self.nvim.out_write("No cell above.\n")
+                    return
+                above_block = buf[adj_start:adj_end + 1]
+                buf[adj_start:end + 1] = cell_lines + [""] + above_block
+                self.nvim.current.window.cursor = (adj_start + 1, 0)
+
+            elif direction == "downward":
+                adj_start, adj_end = find_adjacent_cell("downward", start, end)
+                if adj_start is None:
+                    self.nvim.out_write("No cell below.\n")
+                    return
+                below_block = buf[adj_start:adj_end + 1]
+                buf[start:adj_end + 1] = below_block + [""] + cell_lines
+                self.nvim.current.window.cursor = (adj_start + 1, 0)
+
+        def run():
+            row = cursor_row - 1
+            start, end = find_cell_boundaries(row)
+            if start is None or end is None:
+                self.nvim.out_write("Cursor not inside a valid <cell> block.\n")
+                return
+            move_cell(direction, start, end)
+
+        self.nvim.async_call(run)
+
     def _evaluate_cell(self, delay: bool = False):
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
@@ -526,13 +603,6 @@ class Molten:
             "delay": delay, 
         })
 
-
-
-
-
-
-
-
     def _eval_worker(self):
         while True:
             item = self.eval_queue.get()
@@ -540,12 +610,6 @@ class Molten:
                 break  # Optional shutdown
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
-
-
-
-
-
-
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = queue.Queue()
@@ -1383,20 +1447,15 @@ class Molten:
     def command_volcano_create_cell_downward(self, args: List[str]) -> None:
         self._create_cell(direction="downward")
 
-    @pynvim.command("VolcanoClearCellOutput", nargs="*", sync=True)
+    @pynvim.command("VolcanoMoveCellUpward", nargs="*", sync=True)
     @nvimui
-    def command_volcano_clear_cell_output(self, args: List[str]) -> None:
-        buf = self.nvim.current.buffer
-        cursor_row = self.nvim.current.window.cursor[0] - 1
+    def command_volcano_move_cell_upward(self, args: List[str]) -> None:
+        self._move_cell("upward")
 
-        pass
-
-
-
-
-
-
-
+    @pynvim.command("VolcanoMoveCellDownward", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_move_cell_downward(self, args: List[str]) -> None:
+        self._move_cell("downward")
 
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore
