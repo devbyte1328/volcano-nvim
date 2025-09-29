@@ -1457,6 +1457,93 @@ class Molten:
     def command_volcano_move_cell_downward(self, args: List[str]) -> None:
         self._move_cell("downward")
 
+    @pynvim.command("VolcanoDeleteCell", nargs="*", sync=True)
+    @nvimui
+    def command_volcano_delete_cell(self, args: List[str]) -> None:
+        buf = self.nvim.current.buffer
+        cursor_row = self.nvim.current.window.cursor[0] - 1  # 0-based
+        total_lines = len(buf)
+
+        def find_tag_block(start_row: int, open_tag: str, close_tag: str):
+            """Find the inclusive range for a tag block surrounding the cursor."""
+            open_idx, close_idx = None, None
+
+            # Search upward for opening tag
+            for i in range(start_row, -1, -1):
+                if buf[i].strip() == open_tag:
+                    open_idx = i
+                    break
+
+            # Search downward for closing tag
+            for j in range(start_row, total_lines):
+                if buf[j].strip() == close_tag:
+                    close_idx = j
+                    break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def find_output_block(after_row: int):
+            """Find next <output> block (if any) after a given line index."""
+            open_idx, close_idx = None, None
+
+            for i in range(after_row + 1, total_lines):
+                if buf[i].strip() == "<output>":
+                    open_idx = i
+                    break
+
+            if open_idx is not None:
+                for j in range(open_idx, total_lines):
+                    if buf[j].strip() == "</output>":
+                        close_idx = j
+                        break
+
+            if open_idx is not None and close_idx is not None:
+                return (open_idx, close_idx)
+            return None
+
+        def delete_range(start: int, end: int):
+            """Delete inclusive range and clean up extra blank lines."""
+            del buf[start:end + 1]
+
+            # Remove stray blank line before
+            if start - 1 >= 0 and buf[start - 1].strip() == "":
+                del buf[start - 1]
+                start -= 1
+
+            # Remove stray blank line after (if not EOF)
+            if start < len(buf) and buf[start].strip() == "":
+                del buf[start]
+
+        def run():
+            cell_block = find_tag_block(cursor_row, "<cell>", "</cell>")
+            if not cell_block:
+                self.nvim.err_write("No <cell> block found under cursor.\n")
+                return
+
+            cell_start, cell_end = cell_block
+            output_block = find_output_block(cell_end)
+
+            # Delete output block first (if exists)
+            if output_block:
+                delete_range(output_block[0], output_block[1])
+
+            # Adjust in case lines shifted
+            new_total = len(buf)
+            shift = (total_lines - new_total)
+            if shift > 0 and output_block and output_block[0] < cell_start:
+                cell_start -= shift
+                cell_end -= shift
+
+            delete_range(cell_start, cell_end)
+
+            # Reposition cursor safely
+            new_cursor = min(cell_start, len(buf) - 1)
+            self.nvim.current.window.cursor = (new_cursor + 1, 0)
+
+        self.nvim.async_call(run)
+
     @pynvim.command("MoltenReevaluateAll", nargs=0, sync=True) 
     @nvimui  # type: ignore
     def command_reevaluate_all(self) -> None:
