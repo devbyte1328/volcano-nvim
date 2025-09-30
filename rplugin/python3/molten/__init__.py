@@ -72,6 +72,9 @@ class Molten:
 
         self.global_namespaces: Dict[int, Dict[str, Any]] = {}
 
+        self.running_evals: Dict[int, threading.Thread] = {}
+        self.cancel_flags: Dict[int, threading.Event] = {}
+
     def _initialize(self) -> None:
         assert not self.initialized
 
@@ -613,27 +616,43 @@ class Molten:
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = queue.Queue()
+        cancel_flag = threading.Event()
+        self.cancel_flags[bufnr] = cancel_flag
         class StreamingStdout:
             def write(self, text):
                 for line in text.rstrip().splitlines():
                     output_queue.put(line)
             def flush(self): pass
+
+
         def run_eval():
             local_stdout = sys.stdout
             sys.stdout = StreamingStdout()
             error_occurred = False
             try:
-                full_expr = f"{expr}\nimport time\ntime.sleep(0.16)"
                 globals_ = self.global_namespaces.setdefault(bufnr, {})
-                exec(full_expr, globals_)
+                code_lines = expr.splitlines()
+                for i, line in enumerate(code_lines):
+                    if cancel_flag.is_set():
+                        output_queue.put("[Cancelled]")
+                        break
+                    try:
+                        exec(line, globals_)
+                    except Exception:
+                        tb = traceback.format_exc()
+                        output_queue.put(tb)
+                        error_occurred = True
+                        break
+                    time.sleep(0.01)  # Yield to cancellation checks
             except Exception:
-                error_occurred = True
                 tb = traceback.format_exc()
                 for line in tb.strip().splitlines():
                     output_queue.put(line)
+                error_occurred = True
             finally:
                 sys.stdout = local_stdout
                 output_queue.put((None, error_occurred))
+
         def update_output_block(lines_so_far):
             def _do_update():
                 try:
@@ -662,6 +681,7 @@ class Molten:
             time.sleep(0.5)
         start_time = time.time()
         eval_thread = threading.Thread(target=run_eval)
+        self.running_evals[bufnr] = eval_thread
         eval_thread.start()
         while True:
             try:
@@ -688,6 +708,11 @@ class Molten:
         lines_so_far[0] = f"[{eval_id}][{'Error' if error_occurred else 'Done'}] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
 
+        # Wait for eval thread to finish before cleanup
+        eval_thread.join()
+        # Clean up references
+        self.running_evals.pop(bufnr, None)
+        self.cancel_flags.pop(bufnr, None)
 
 
 
@@ -1739,24 +1764,19 @@ class Molten:
         if not in_cell:
             notify_error(self.nvim, "Not in a cell")
 
-    @pynvim.command("MoltenInterrupt", nargs="*", sync=True) 
-    @nvimui  # type: ignore
+
+    @pynvim.command("MoltenInterrupt", nargs="*", sync=True)
+    @nvimui
     def command_interrupt(self, args) -> None:
-        molten_kernels = self._get_current_buf_kernels(True)
-        assert molten_kernels is not None
-
-        if len(args) > 0:
-            kernel = args[0]
+        bufnr = self.nvim.current.buffer.number
+        cancel_flag = self.cancel_flags.get(bufnr)
+        eval_thread = self.running_evals.get(bufnr)
+        if cancel_flag and eval_thread and eval_thread.is_alive():
+            cancel_flag.set()
+            notify_warn(self.nvim, "Evaluation cancelled.")
         else:
-            self.kernel_check("MoltenInterrupt %k", self.nvim.current.buffer)
-            return
+            notify_info(self.nvim, "No active evaluation to interrupt.")
 
-        for molten in molten_kernels:
-            if molten.kernel_id == kernel:
-                molten.interrupt()
-                return
-
-        notify_error(self.nvim, f"Unable to find kernel: {kernel}")
 
     @pynvim.command("MoltenRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
