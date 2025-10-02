@@ -191,7 +191,8 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
-	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("MoltenInterrupt") end, { desc = "Interrupt Evalutation" })
+	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Evalutation" })
+	
   end,
 })
 ```
@@ -401,7 +402,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
-	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("MoltenInterrupt") end, { desc = "Interrupt Evalutation" })
+	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Evalutation" })
   end,
 })
 ```
