@@ -27,6 +27,7 @@ import threading
 import queue
 
 import multiprocessing
+import signal
 
 @pynvim.plugin
 class Molten:
@@ -74,8 +75,9 @@ class Molten:
 
         self.global_namespaces: Dict[int, Dict[str, Any]] = {}
 
-        self._interrupt_flag = multiprocessing.Manager().Value('b', False)
-        self._current_process = None 
+        self.current_eval_process: Optional[multiprocessing.Process] = None
+        self.current_eval_pid: Optional[int] = None
+        self.current_eval_bufnr: Optional[int] = None
 
     def _initialize(self) -> None:
         assert not self.initialized
@@ -619,28 +621,23 @@ class Molten:
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = multiprocessing.Queue()
 
-        def run_eval(expr, output_queue, globals_):
-            """Run in isolated process; streams stdout back to parent"""
+        def run_eval(expr, output_queue):
             class StreamingStdout:
                 def write(self, text):
                     for line in text.rstrip().splitlines():
                         output_queue.put(line)
                 def flush(self): pass
 
-            local_stdout = sys.stdout
             sys.stdout = StreamingStdout()
-            error_occurred = False
             try:
-                full_expr = f"{expr}\nimport time\ntime.sleep(0.16)"
-                exec(full_expr, globals_)
+                exec(expr, {})
             except Exception:
-                error_occurred = True
                 tb = traceback.format_exc()
                 for line in tb.strip().splitlines():
                     output_queue.put(line)
             finally:
-                sys.stdout = local_stdout
-                output_queue.put((None, error_occurred))
+                sys.stdout = sys.__stdout__
+                output_queue.put((None, False))
 
         def update_output_block(lines_so_far):
             def _do_update():
@@ -663,75 +660,57 @@ class Molten:
                     notify_error(self.nvim, f"Stream update error: {e}")
             self.nvim.async_call(_do_update)
 
-        # init display
+        # initial state
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
-        last_update_time = 0
-        update_interval = 0.3
         update_output_block(lines_so_far)
 
         if delay:
             time.sleep(0.5)
-
         start_time = time.time()
-        error_occurred = False
 
-        # setup namespace and process
-        globals_ = self.global_namespaces.setdefault(bufnr, {})
-
-        process = multiprocessing.Process(target=run_eval, args=(expr, output_queue, globals_))
-        self._current_process = process
-        self._interrupt_flag.value = False
+        # create isolated process
+        process = multiprocessing.Process(target=run_eval, args=(expr, output_queue))
         process.start()
+
+        self.current_eval_process = process
+        self.current_eval_pid = process.pid
+        self.current_eval_bufnr = bufnr
+
+        last_update_time = 0
+        update_interval = 0.3
+        error_occurred = False
 
         try:
             while True:
-                # check for external interrupt
-                if self._interrupt_flag.value:
-                    process.terminate()
-                    output_queue.put((None, True))
-                    self._interrupt_flag.value = False
-                    error_occurred = True
+                if not process.is_alive():
                     break
 
                 try:
                     item = output_queue.get(timeout=0.05)
                     if isinstance(item, tuple) and item[0] is None:
-                        error_occurred = item[1]
                         break
                     lines_so_far.append(item)
-                    elapsed = time.time() - start_time
-                    lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-                    now = time.time()
-                    if now - last_update_time > update_interval:
-                        update_output_block(lines_so_far)
-                        last_update_time = now
                 except queue.Empty:
-                    elapsed = time.time() - start_time
-                    lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-                    now = time.time()
-                    if now - last_update_time > update_interval:
-                        update_output_block(lines_so_far)
-                        last_update_time = now
+                    pass
+
+                elapsed = time.time() - start_time
+                lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
+                now = time.time()
+                if now - last_update_time > update_interval:
+                    update_output_block(lines_so_far)
+                    last_update_time = now
+
         finally:
             if process.is_alive():
-                process.terminate()
-            process.join(timeout=0.2)
-            self._current_process = None
+                os.kill(process.pid, signal.SIGKILL) 
+                process.join(timeout=1)
+            self.current_eval_process = None
+            self.current_eval_pid = None
+            self.current_eval_bufnr = None
 
-        elapsed = time.time() - start_time - 0.16
-        elapsed = max(0, elapsed)
-        status = "Error" if error_occurred else "Done"
-        lines_so_far[0] = f"[{eval_id}][{status}] {elapsed:.2f} seconds..."
+        elapsed = max(0, time.time() - start_time)
+        lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
         update_output_block(lines_so_far)
-
-
-
-
-
-
-
-
-
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
@@ -1777,14 +1756,25 @@ class Molten:
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
-        try:
-            if self._current_process is not None:
-                self._interrupt_flag.value = True
-                notify_info(self.nvim, "Volcano: Interrupt requested.")
-            else:
-                notify_warn(self.nvim, "Volcano: No active evaluation to interrupt.")
-        except Exception as e:
-            notify_error(self.nvim, f"Interrupt error: {e}")
+        """User command: instant SIGKILL to current eval."""
+        if self.current_eval_process and self.current_eval_process.is_alive():
+            pid = self.current_eval_pid
+            try:
+                os.kill(pid, signal.SIGKILL)
+                self.current_eval_process.join(timeout=1)
+            except ProcessLookupError:
+                pass
+
+            # wipe namespace for this buffer
+            if self.current_eval_bufnr in self.global_namespaces:
+                self.global_namespaces.pop(self.current_eval_bufnr, None)
+
+            notify_warn(self.nvim, f"Volcano: KILLED kernel (PID={pid})")
+            self.current_eval_process = None
+            self.current_eval_pid = None
+            self.current_eval_bufnr = None
+        else:
+            notify_info(self.nvim, "Volcano: No running kernel to kill.")
 
     @pynvim.command("MoltenRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
