@@ -619,26 +619,62 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
+
+
+
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         output_queue = multiprocessing.Queue()
 
         def run_eval(expr, output_queue):
+            """Run cell code in a subprocess, stream stdout/stderr, capture clean tracebacks."""
             class StreamingStdout:
+                def __init__(self, q): self.q = q
                 def write(self, text):
-                    for line in text.rstrip().splitlines():
-                        output_queue.put(line)
+                    if not text:
+                        return
+                    for line in text.splitlines():
+                        self.q.put(("line", line))
                 def flush(self): pass
 
-            sys.stdout = StreamingStdout()
+            error_happened = False
+            old_stdout, old_stderr = sys.stdout, sys.stderr
             try:
-                exec(expr, {})
-            except Exception:
-                tb = traceback.format_exc()
-                for line in tb.strip().splitlines():
-                    output_queue.put(line)
+                stream = StreamingStdout(output_queue)
+                sys.stdout = stream
+                sys.stderr = stream
+                try:
+                    exec(expr, {})
+                except Exception as e:
+                    error_happened = True
+                    import traceback
+
+                    # Extract traceback frames
+                    tb = traceback.extract_tb(sys.exc_info()[2])
+                    expr_lines = expr.splitlines()
+
+                    # Find first frame that looks like user code
+                    user_lineno = None
+                    for frame in tb:
+                        if frame.filename == "<string>":
+                            user_lineno = frame.lineno
+                            break
+
+                    # --- Jupyter-style error display ---
+                    output_queue.put(("line", "---------------------------------------------------------------------------"))
+                    output_queue.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
+                    output_queue.put(("line", ""))
+
+                    if user_lineno is not None and 1 <= user_lineno <= len(expr_lines):
+                        output_queue.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
+                        line_text = expr_lines[user_lineno - 1].strip()
+                        output_queue.put(("line", f"----> {user_lineno} {line_text}"))
+
+                    output_queue.put(("line", ""))
+                    output_queue.put(("line", f"{type(e).__name__}: {e}"))
             finally:
-                sys.stdout = sys.__stdout__
-                output_queue.put((None, False))
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                output_queue.put(("done", error_happened))
 
         def update_output_block(lines_so_far):
             def _do_update():
@@ -655,13 +691,17 @@ class Molten:
                             out_end = i
                             break
                     if out_start is not None and out_end is not None:
+                        # remove trailing blank lines
+                        while lines_so_far and not lines_so_far[-1].strip():
+                            lines_so_far.pop()
                         buf.api.set_lines(out_start + 1, out_end, False, lines_so_far)
                         self.nvim.command("undojoin")
                 except Exception as e:
                     notify_error(self.nvim, f"Stream update error: {e}")
+
             self.nvim.async_call(_do_update)
 
-        # initial state
+        # --- Initialization ---
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far)
 
@@ -669,7 +709,7 @@ class Molten:
             time.sleep(0.5)
         start_time = time.time()
 
-        # create isolated process
+        # --- Start process ---
         process = multiprocessing.Process(target=run_eval, args=(expr, output_queue))
         process.start()
 
@@ -677,84 +717,100 @@ class Molten:
         self.current_eval_pid = process.pid
         self.current_eval_bufnr = bufnr
 
-        last_update_time = 0
+        last_update_time = 0.0
         update_interval = 0.3
+        saw_done_sentinel = False
         error_occurred = False
 
         try:
             while True:
-                if not process.is_alive():
-                    break
-
+                got_item = False
                 try:
                     item = output_queue.get(timeout=0.05)
-                    if isinstance(item, tuple) and item[0] is None:
-                        break
-                    lines_so_far.append(item)
+                    got_item = True
                 except queue.Empty:
                     pass
 
+                if got_item:
+                    kind, payload = item
+                    if kind == "line":
+                        lines_so_far.append(payload)
+                    elif kind == "done":
+                        saw_done_sentinel = True
+                        error_occurred = bool(payload)
+
                 elapsed = time.time() - start_time
                 lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
+
                 now = time.time()
                 if now - last_update_time > update_interval:
                     update_output_block(lines_so_far)
                     last_update_time = now
 
+                if not process.is_alive() and saw_done_sentinel:
+                    break
 
+                if not process.is_alive() and not got_item:
+                    try:
+                        while True:
+                            kind, payload = output_queue.get_nowait()
+                            if kind == "line":
+                                lines_so_far.append(payload)
+                            elif kind == "done":
+                                saw_done_sentinel = True
+                                error_occurred = bool(payload)
+                                break
+                    except queue.Empty:
+                        pass
 
+                    if saw_done_sentinel:
+                        break
+                    else:
+                        if process.exitcode not in (0, None):
+                            error_occurred = True
+                        break
         finally:
             if process.is_alive():
-                os.kill(process.pid, signal.SIGKILL)
-                process.join(timeout=1)
+                try:
+                    os.kill(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.join(timeout=1)
 
             self.current_eval_process = None
             self.current_eval_pid = None
             self.current_eval_bufnr = None
 
-        elapsed = max(0, time.time() - start_time)
+        elapsed = max(0.0, time.time() - start_time)
 
-        # Check if user interrupted
+        # --- Interrupted manually ---
         if getattr(self, "eval_interrupted", False):
             lines_so_far[0] = f"[{eval_id}][Interrupted] {elapsed:.2f} seconds..."
             lines_so_far.append("---------------------------------------------------------------------------")
             lines_so_far.append("KeyboardInterrupt                         Traceback (most recent call last)")
 
-            # Split evaluated expression into lines
             expr_lines = expr.splitlines()
-
-            # Pick an approximate interrupted line
-            # (middle of long code, or second line for short cells)
-            if len(expr_lines) == 1:
-                interrupted_line_index = 0
-            elif len(expr_lines) == 2:
-                interrupted_line_index = 1
-            else:
-                interrupted_line_index = min(1, len(expr_lines) - 1)
-
-            # Compute display line numbers relative to cell
+            interrupted_line_index = 1 if len(expr_lines) > 1 else 0
             traceback_line_num = start_line + interrupted_line_index + 1
 
-            # Header
             lines_so_far.append(f"Cell In[{eval_id}], line {traceback_line_num}")
 
-            # Context before, current, and after line (like Python)
             context_start = max(0, interrupted_line_index - 1)
-            context_end = min(len(expr_lines), interrupted_line_index + 3)
+            context_end = min(len(expr_lines), interrupted_line_index + 2)
             for i in range(context_start, context_end):
                 prefix = "----> " if i == interrupted_line_index else "      "
-                # Ensure proper visual indentation
                 code_line = expr_lines[i].expandtabs(4)
-                lines_so_far.append(f"{prefix}{i + 1 - start_line:>3} {code_line}")
+                rel = (i - context_start) + 1
+                lines_so_far.append(f"{prefix}{rel:>3} {code_line}")
 
             lines_so_far.append("")
             lines_so_far.append("KeyboardInterrupt: ")
-
-            # Reset flag
             self.eval_interrupted = False
-
         else:
-            lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+            if error_occurred:
+                lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
+            else:
+                lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
         update_output_block(lines_so_far)
 
