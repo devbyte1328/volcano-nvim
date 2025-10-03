@@ -78,6 +78,7 @@ class Molten:
         self.current_eval_process: Optional[multiprocessing.Process] = None
         self.current_eval_pid: Optional[int] = None
         self.current_eval_bufnr: Optional[int] = None
+        self.eval_interrupted = False
 
     def _initialize(self) -> None:
         assert not self.initialized
@@ -700,17 +701,65 @@ class Molten:
                     update_output_block(lines_so_far)
                     last_update_time = now
 
+
+
         finally:
             if process.is_alive():
-                os.kill(process.pid, signal.SIGKILL) 
+                os.kill(process.pid, signal.SIGKILL)
                 process.join(timeout=1)
+
             self.current_eval_process = None
             self.current_eval_pid = None
             self.current_eval_bufnr = None
 
         elapsed = max(0, time.time() - start_time)
-        lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+
+        # Check if user interrupted
+        if getattr(self, "eval_interrupted", False):
+            lines_so_far[0] = f"[{eval_id}][Interrupted] {elapsed:.2f} seconds..."
+            lines_so_far.append("---------------------------------------------------------------------------")
+            lines_so_far.append("KeyboardInterrupt                         Traceback (most recent call last)")
+
+            # Split evaluated expression into lines
+            expr_lines = expr.splitlines()
+
+            # Pick an approximate interrupted line
+            # (middle of long code, or second line for short cells)
+            if len(expr_lines) == 1:
+                interrupted_line_index = 0
+            elif len(expr_lines) == 2:
+                interrupted_line_index = 1
+            else:
+                interrupted_line_index = min(1, len(expr_lines) - 1)
+
+            # Compute display line numbers relative to cell
+            traceback_line_num = start_line + interrupted_line_index + 1
+
+            # Header
+            lines_so_far.append(f"Cell In[{eval_id}], line {traceback_line_num}")
+
+            # Context before, current, and after line (like Python)
+            context_start = max(0, interrupted_line_index - 1)
+            context_end = min(len(expr_lines), interrupted_line_index + 3)
+            for i in range(context_start, context_end):
+                prefix = "----> " if i == interrupted_line_index else "      "
+                # Ensure proper visual indentation
+                code_line = expr_lines[i].expandtabs(4)
+                lines_so_far.append(f"{prefix}{i + 1 - start_line:>3} {code_line}")
+
+            lines_so_far.append("")
+            lines_so_far.append("KeyboardInterrupt: ")
+
+            # Reset flag
+            self.eval_interrupted = False
+
+        else:
+            lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+
         update_output_block(lines_so_far)
+
+
+
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
@@ -1753,6 +1802,8 @@ class Molten:
         if not in_cell:
             notify_error(self.nvim, "Not in a cell")
 
+
+
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
@@ -1765,16 +1816,16 @@ class Molten:
             except ProcessLookupError:
                 pass
 
-            # wipe namespace for this buffer
+            self.eval_interrupted = True
+
             if self.current_eval_bufnr in self.global_namespaces:
                 self.global_namespaces.pop(self.current_eval_bufnr, None)
 
-            notify_warn(self.nvim, f"Volcano: KILLED kernel (PID={pid})")
             self.current_eval_process = None
             self.current_eval_pid = None
             self.current_eval_bufnr = None
-        else:
-            notify_info(self.nvim, "Volcano: No running kernel to kill.")
+
+
 
     @pynvim.command("MoltenRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
