@@ -1775,7 +1775,6 @@ class Molten:
             # Yank selection
             self.nvim.command("normal! y")
 
-
         self.nvim.async_call(run)
 
     @pynvim.command("VolcanoPasteCell", nargs="*", sync=True)
@@ -1884,7 +1883,6 @@ class Molten:
         molten_kernels = self._get_current_buf_kernels(True)
         assert molten_kernels is not None
 
-     
         in_cell = False
         for kernel in molten_kernels:
             if kernel.reevaluate_cell():

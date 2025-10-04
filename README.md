@@ -148,6 +148,7 @@ return {
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
+                        highlight IPYNBEvalInterrupted guifg=red ctermfg=196
                         highlight IPYNBEvalKernel_Stopped guifg=red ctermfg=196
                     ]])
                 end)
@@ -196,7 +197,6 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
 	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
 	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
-	
   end,
 })
 ```
