@@ -620,37 +620,67 @@ class Molten:
             self.eval_queue.task_done()
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-
         def update_output_block(lines):
             def _do_update():
                 try:
                     buf = self.nvim.buffers[bufnr]
+                    code_lines = expr.splitlines()
+                    found = False
+                    cell_start = None
+                    cell_end = None
+                    in_cell = False
+                    code_index = 0
+                    for i in range(len(buf)):
+                        line = buf[i]
+                        stripped = line.strip()
+                        if stripped == "<cell>":
+                            in_cell = True
+                            cell_start = i
+                            code_index = 0
+                            continue
+                        if in_cell:
+                            if stripped == "</cell>":
+                                in_cell = False
+                                cell_end = i
+                                if code_index == len(code_lines):
+                                    found = True
+                                    break
+                                else:
+                                    code_index = 0
+                                    continue
+                            if code_index < len(code_lines) and line.rstrip() == code_lines[code_index].rstrip():  # Use rstrip to handle trailing spaces
+                                code_index += 1
+                            else:
+                                in_cell = False
+                                code_index = 0
+                    if not found:
+                        notify_error(self.nvim, "Cell not found in buffer for evaluation")
+                        return
+                    end_line_current = cell_end
                     out_start, out_end = None, None
                     found_output = False
-                    # Find <output> … </output> region.
-                    for i in range(end_line + 1, len(buf)):
-                        line = buf[i].strip()
+                    for j in range(end_line_current + 1, len(buf)):
+                        line = buf[j].strip()
                         if not found_output and line == "<output>":
-                            out_start = i
+                            out_start = j
                             found_output = True
                         elif found_output and line == "</output>":
-                            out_end = i
+                            out_end = j
                             break
                     if out_start is not None and out_end is not None:
-                        # Remove trailing blank lines.
                         while lines and not lines[-1].strip():
                             lines.pop()
                         buf.api.set_lines(out_start + 1, out_end, False, lines)
                         self.nvim.command("undojoin")
+                    else:
+                        # Initial insertion
+                        if len(lines) >= 1 and lines[0].startswith(f"[{eval_id}][*]"):
+                            insert_lines = ["<output>"] + lines + ["</output>"]
+                            buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
+                            self.nvim.command("undojoin")
                 except Exception as e:
-                    # fall back to the plugin’s error reporter if available
-                    try:
-                        from molten.utils import notify_error
-                        notify_error(self.nvim, f"Stream update error: {e}")
-                    except Exception:
-                        print(f"Stream update error: {e}", file=sys.stderr)
+                    notify_error(self.nvim, f"Stream update error: {e}")
             self.nvim.async_call(_do_update)
-
         if getattr(self, "eval_interrupted", False):
             lines = [f"[{eval_id}][Interrupted] 0.00 seconds...",
                      "Evaluation cancelled by user."]
@@ -663,17 +693,13 @@ class Molten:
                 pass
             self.eval_interrupted = False
             return
-
         # Initialise the output region.
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far)
-
         if delay:
             time.sleep(0.5)
-
         # Set up a queue for streaming output from the subprocess.
         output_queue = multiprocessing.Queue()
-
         # Function to run the user’s code in its own process.
         def run_eval(code, q):
             class StreamingStdout:
@@ -686,7 +712,6 @@ class Molten:
                         self.q.put(("line", line))
                 def flush(self):
                     pass
-
             error_happened = False
             old_stdout, old_stderr = sys.stdout, sys.stderr
             try:
@@ -721,19 +746,16 @@ class Molten:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
                 q.put(("done", error_happened))
-
         process = multiprocessing.Process(target=run_eval, args=(expr, output_queue))
         process.start()
         self.current_eval_process = process
         self.current_eval_pid = process.pid
         self.current_eval_bufnr = bufnr
-
         start_time = time.time()
         last_update_time = start_time
         update_interval = 0.3
         saw_done = False
         error_occurred = False
-
         try:
             while True:
                 got_item = False
@@ -742,22 +764,18 @@ class Molten:
                     got_item = True
                 except queue.Empty:
                     pass
-
                 if got_item:
                     if kind == "line":
                         lines_so_far.append(str(payload))
                     elif kind == "done":
                         saw_done = True
                         error_occurred = bool(payload)
-
                 elapsed = time.time() - start_time
                 lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-
                 now = time.time()
                 if now - last_update_time > update_interval:
                     update_output_block(lines_so_far.copy())
                     last_update_time = now
-
                 if not process.is_alive() and saw_done:
                     break
                 if not process.is_alive() and not got_item:
@@ -783,18 +801,15 @@ class Molten:
                 except ProcessLookupError:
                     pass
                 process.join(timeout=1)
-
             self.current_eval_process = None
             self.current_eval_pid = None
             self.current_eval_bufnr = None
-
         elapsed = max(0.0, time.time() - start_time)
-
         if getattr(self, "eval_interrupted", False):
             # Mark as interrupted, add a minimal traceback and drain the queue.
             lines_so_far[0] = f"[{eval_id}][Interrupted] {elapsed:.2f} seconds..."
             lines_so_far.append("---------------------------------------------------------------------------")
-            lines_so_far.append("KeyboardInterrupt                         Traceback (most recent call last)")
+            lines_so_far.append("KeyboardInterrupt Traceback (most recent call last)")
             expr_lines = expr.splitlines()
             interrupted_line_index = 1 if len(expr_lines) > 1 else 0
             traceback_line_num = start_line + interrupted_line_index + 1
@@ -802,7 +817,7 @@ class Molten:
             context_start = max(0, interrupted_line_index - 1)
             context_end = min(len(expr_lines), interrupted_line_index + 2)
             for i in range(context_start, context_end):
-                prefix = "----> " if i == interrupted_line_index else "      "
+                prefix = "----> " if i == interrupted_line_index else " "
                 code_line = expr_lines[i].expandtabs(4)
                 rel = (i - context_start) + 1
                 lines_so_far.append(f"{prefix}{rel:>3} {code_line}")
@@ -819,7 +834,6 @@ class Molten:
                 lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
             else:
                 lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
-
         update_output_block(lines_so_far.copy())
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
