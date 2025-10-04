@@ -685,7 +685,7 @@ class Molten:
             self.nvim.async_call(_do_update)
 
         if getattr(self, "eval_interrupted", False):
-            lines = [f"[{eval_id}][Interrupted] 0.00 seconds...",
+            lines = [f"[{eval_id}][Kernel_Stopped] 0.00 seconds...",
                      "Evaluation cancelled by user."]
             update_output_block(lines)
             try:
@@ -822,7 +822,7 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
         if getattr(self, "eval_interrupted", False):
-            lines_so_far[0] = f"[{eval_id}][Interrupted] {elapsed:.2f} seconds..."
+            lines_so_far[0] = f"[{eval_id}][Kernel_Stopped] {elapsed:.2f} seconds..."
             lines_so_far.append("---------------------------------------------------------------------------")
             lines_so_far.append("KeyboardInterrupt Traceback (most recent call last)")
             expr_lines = expr.splitlines()
@@ -1896,6 +1896,11 @@ class Molten:
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
+        pass
+
+    @pynvim.command("VolcanoRestart", nargs="*", sync=True, bang=True)
+    @nvimui  # type: ignore
+    def command_restart(self, args, bang) -> None:
         if self.current_eval_process and self.current_eval_process.is_alive():
             pid = self.current_eval_pid
             try:
@@ -1920,7 +1925,7 @@ class Molten:
             changed = False
             for line in lines:
                 if "[*] queue..." in line:
-                    new_lines.append(line.replace("[*] queue...", "[Interrupted]"))
+                    new_lines.append(line.replace("[*] queue...", "[Kernel_Stopped]"))
                     changed = True
                 else:
                     new_lines.append(line)
@@ -1932,24 +1937,6 @@ class Molten:
                 notify_warn(self.nvim, f"Failed to update queued cells: {e}")
             except Exception:
                 print(f"Failed to update queued cells: {e}", file=sys.stderr)
-
-    @pynvim.command("MoltenRestart", nargs="*", sync=True, bang=True)
-    @nvimui  # type: ignore
-    def command_restart(self, args, bang) -> None:
-        molten_kernels = self._get_current_buf_kernels(True)
-        assert molten_kernels is not None
-
-        if len(args) > 0:
-            kernel = args[0]
-        else:
-            self.kernel_check(f"MoltenRestart{'!' if bang else ''} %k", self.nvim.current.buffer)
-            return
-
-        for molten in molten_kernels:
-            if molten.kernel_id == kernel:
-                molten.restart(delete_outputs=bang)
-                return
-        notify_error(self.nvim, f"Unable to find kernel: {kernel}")
 
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore

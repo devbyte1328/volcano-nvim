@@ -134,6 +134,8 @@ return {
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalInterrupted /\v\[Interrupted\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -146,6 +148,7 @@ return {
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
+                        highlight IPYNBEvalKernel_Stopped guifg=red ctermfg=196
                     ]])
                 end)
             end,
@@ -191,7 +194,8 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
-	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Evalutation" })
+	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
+	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
 	
   end,
 })
@@ -346,6 +350,7 @@ return {
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalInterrupted /\v\[Interrupted\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -359,6 +364,7 @@ return {
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
                         highlight IPYNBEvalInterrupted guifg=red ctermfg=196
+                        highlight IPYNBEvalKernel_Stopped guifg=red ctermfg=196
                     ]])
                 end)
             end,
@@ -404,7 +410,8 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>dc<CR>", function() vim.cmd("VolcanoDeleteCell") end, { desc = "Delete cell" })
 	vim.keymap.set("n", "<leader>cc<CR>", function() vim.cmd("VolcanoCopyCell") end, { desc = "Copy cell" })
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
-	vim.keymap.set("n", "<leader>i<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Evalutation" })
+	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
+	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
   end,
 })
 ```
