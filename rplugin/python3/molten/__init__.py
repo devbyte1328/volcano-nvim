@@ -621,67 +621,15 @@ class Molten:
 
 
 
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-        output_queue = multiprocessing.Queue()
 
-        def run_eval(expr, output_queue):
-            """Run cell code in a subprocess, stream stdout/stderr, capture clean tracebacks."""
-            class StreamingStdout:
-                def __init__(self, q): self.q = q
-                def write(self, text):
-                    if not text:
-                        return
-                    for line in text.splitlines():
-                        self.q.put(("line", line))
-                def flush(self): pass
-
-            error_happened = False
-            old_stdout, old_stderr = sys.stdout, sys.stderr
-            try:
-                stream = StreamingStdout(output_queue)
-                sys.stdout = stream
-                sys.stderr = stream
-                try:
-                    exec(expr, {})
-                except Exception as e:
-                    error_happened = True
-                    import traceback
-
-                    # Extract traceback frames
-                    tb = traceback.extract_tb(sys.exc_info()[2])
-                    expr_lines = expr.splitlines()
-
-                    # Find first frame that looks like user code
-                    user_lineno = None
-                    for frame in tb:
-                        if frame.filename == "<string>":
-                            user_lineno = frame.lineno
-                            break
-
-                    # --- Jupyter-style error display ---
-                    output_queue.put(("line", "---------------------------------------------------------------------------"))
-                    output_queue.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
-                    output_queue.put(("line", ""))
-
-                    if user_lineno is not None and 1 <= user_lineno <= len(expr_lines):
-                        output_queue.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
-                        line_text = expr_lines[user_lineno - 1].strip()
-                        output_queue.put(("line", f"----> {user_lineno} {line_text}"))
-
-                    output_queue.put(("line", ""))
-                    output_queue.put(("line", f"{type(e).__name__}: {e}"))
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                output_queue.put(("done", error_happened))
-
-        def update_output_block(lines_so_far):
+        def update_output_block(lines):
             def _do_update():
                 try:
                     buf = self.nvim.buffers[bufnr]
                     out_start, out_end = None, None
                     found_output = False
+                    # Find <output> … </output> region.
                     for i in range(end_line + 1, len(buf)):
                         line = buf[i].strip()
                         if not found_output and line == "<output>":
@@ -691,52 +639,117 @@ class Molten:
                             out_end = i
                             break
                     if out_start is not None and out_end is not None:
-                        # remove trailing blank lines
-                        while lines_so_far and not lines_so_far[-1].strip():
-                            lines_so_far.pop()
-                        buf.api.set_lines(out_start + 1, out_end, False, lines_so_far)
+                        # Remove trailing blank lines.
+                        while lines and not lines[-1].strip():
+                            lines.pop()
+                        buf.api.set_lines(out_start + 1, out_end, False, lines)
                         self.nvim.command("undojoin")
                 except Exception as e:
-                    notify_error(self.nvim, f"Stream update error: {e}")
-
+                    # fall back to the plugin’s error reporter if available
+                    try:
+                        from molten.utils import notify_error
+                        notify_error(self.nvim, f"Stream update error: {e}")
+                    except Exception:
+                        print(f"Stream update error: {e}", file=sys.stderr)
             self.nvim.async_call(_do_update)
 
-        # --- Initialization ---
+        if getattr(self, "eval_interrupted", False):
+            lines = [f"[{eval_id}][Interrupted] 0.00 seconds...",
+                     "Evaluation cancelled by user."]
+            update_output_block(lines)
+            # Drain the worker’s queue so no queued cells remain.
+            try:
+                while True:
+                    self.eval_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self.eval_interrupted = False
+            return
+
+        # Initialise the output region.
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far)
 
         if delay:
             time.sleep(0.5)
-        start_time = time.time()
 
-        # --- Start process ---
+        # Set up a queue for streaming output from the subprocess.
+        output_queue = multiprocessing.Queue()
+
+        # Function to run the user’s code in its own process.
+        def run_eval(code, q):
+            class StreamingStdout:
+                def __init__(self, qq):
+                    self.q = qq
+                def write(self, text):
+                    if not text:
+                        return
+                    for line in text.splitlines():
+                        self.q.put(("line", line))
+                def flush(self):
+                    pass
+
+            error_happened = False
+            old_stdout, old_stderr = sys.stdout, sys.stderr
+            try:
+                stream = StreamingStdout(q)
+                sys.stdout = stream
+                sys.stderr = stream
+                # Use the persistent namespace for this buffer if available.
+                globals_dict = {}
+                if isinstance(getattr(self, "global_namespaces", None), dict):
+                    globals_dict = self.global_namespaces.get(bufnr, {})
+                try:
+                    exec(code, globals_dict)
+                except BaseException as e:
+                    error_happened = True
+                    tb = traceback.extract_tb(e.__traceback__)
+                    code_lines = code.splitlines()
+                    user_lineno = None
+                    for frame in tb:
+                        if frame.filename == "<string>":
+                            user_lineno = frame.lineno
+                            break
+                    q.put(("line", "---------------------------------------------------------------------------"))
+                    q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
+                    q.put(("line", ""))
+                    if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
+                        q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
+                        line_text = code_lines[user_lineno - 1].strip()
+                        q.put(("line", f"----> {user_lineno} {line_text}"))
+                        q.put(("line", ""))
+                    q.put(("line", f"{type(e).__name__}: {e}"))
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                q.put(("done", error_happened))
+
         process = multiprocessing.Process(target=run_eval, args=(expr, output_queue))
         process.start()
-
         self.current_eval_process = process
         self.current_eval_pid = process.pid
         self.current_eval_bufnr = bufnr
 
-        last_update_time = 0.0
+        start_time = time.time()
+        last_update_time = start_time
         update_interval = 0.3
-        saw_done_sentinel = False
+        saw_done = False
         error_occurred = False
 
         try:
             while True:
                 got_item = False
                 try:
-                    item = output_queue.get(timeout=0.05)
+                    kind, payload = output_queue.get(timeout=0.05)
                     got_item = True
                 except queue.Empty:
                     pass
 
                 if got_item:
-                    kind, payload = item
                     if kind == "line":
-                        lines_so_far.append(payload)
+                        lines_so_far.append(str(payload))
                     elif kind == "done":
-                        saw_done_sentinel = True
+                        saw_done = True
                         error_occurred = bool(payload)
 
                 elapsed = time.time() - start_time
@@ -744,38 +757,34 @@ class Molten:
 
                 now = time.time()
                 if now - last_update_time > update_interval:
-                    update_output_block(lines_so_far)
+                    update_output_block(lines_so_far.copy())
                     last_update_time = now
 
-                if not process.is_alive() and saw_done_sentinel:
+                if not process.is_alive() and saw_done:
                     break
-
                 if not process.is_alive() and not got_item:
+                    # Drain any remaining output from the queue.
                     try:
                         while True:
                             kind, payload = output_queue.get_nowait()
                             if kind == "line":
-                                lines_so_far.append(payload)
+                                lines_so_far.append(str(payload))
                             elif kind == "done":
-                                saw_done_sentinel = True
+                                saw_done = True
                                 error_occurred = bool(payload)
                                 break
                     except queue.Empty:
                         pass
-
-                    if saw_done_sentinel:
-                        break
-                    else:
-                        if process.exitcode not in (0, None):
-                            error_occurred = True
-                        break
+                    break
+                if getattr(self, "eval_interrupted", False) and not process.is_alive():
+                    break
         finally:
             if process.is_alive():
                 try:
                     os.kill(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            process.join(timeout=1)
+                process.join(timeout=1)
 
             self.current_eval_process = None
             self.current_eval_pid = None
@@ -783,18 +792,15 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
 
-        # --- Interrupted manually ---
         if getattr(self, "eval_interrupted", False):
+            # Mark as interrupted, add a minimal traceback and drain the queue.
             lines_so_far[0] = f"[{eval_id}][Interrupted] {elapsed:.2f} seconds..."
             lines_so_far.append("---------------------------------------------------------------------------")
             lines_so_far.append("KeyboardInterrupt                         Traceback (most recent call last)")
-
             expr_lines = expr.splitlines()
             interrupted_line_index = 1 if len(expr_lines) > 1 else 0
             traceback_line_num = start_line + interrupted_line_index + 1
-
             lines_so_far.append(f"Cell In[{eval_id}], line {traceback_line_num}")
-
             context_start = max(0, interrupted_line_index - 1)
             context_end = min(len(expr_lines), interrupted_line_index + 2)
             for i in range(context_start, context_end):
@@ -802,9 +808,13 @@ class Molten:
                 code_line = expr_lines[i].expandtabs(4)
                 rel = (i - context_start) + 1
                 lines_so_far.append(f"{prefix}{rel:>3} {code_line}")
-
             lines_so_far.append("")
             lines_so_far.append("KeyboardInterrupt: ")
+            try:
+                while True:
+                    self.eval_queue.get_nowait()
+            except queue.Empty:
+                pass
             self.eval_interrupted = False
         else:
             if error_occurred:
@@ -812,7 +822,7 @@ class Molten:
             else:
                 lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
-        update_output_block(lines_so_far)
+        update_output_block(lines_so_far.copy())
 
 
 
