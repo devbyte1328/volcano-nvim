@@ -29,6 +29,8 @@ import queue
 import multiprocessing
 import signal
 
+import io
+
 @pynvim.plugin
 class Molten:
     """The plugin class. Provides an interface for interacting with the plugin via vim functions,
@@ -704,7 +706,6 @@ class Molten:
         output_queue = multiprocessing.Queue()
 
         def run_eval(code, q):
-            import io
             class StreamingStdout(io.TextIOBase):
                 """Custom stdout that sends each logical print line without extra spacing."""
                 def __init__(self, qq):
