@@ -619,8 +619,6 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
-
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
 
         def update_output_block(lines):
@@ -823,9 +821,6 @@ class Molten:
                 lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
         update_output_block(lines_so_far.copy())
-
-
-
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
@@ -1868,12 +1863,9 @@ class Molten:
         if not in_cell:
             notify_error(self.nvim, "Not in a cell")
 
-
-
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
-        """User command: instant SIGKILL to current eval."""
         if self.current_eval_process and self.current_eval_process.is_alive():
             pid = self.current_eval_pid
             try:
@@ -1891,7 +1883,25 @@ class Molten:
             self.current_eval_pid = None
             self.current_eval_bufnr = None
 
-
+        try:
+            cur_buf = self.nvim.current.buffer
+            lines = list(cur_buf[:])
+            new_lines = []
+            changed = False
+            for line in lines:
+                if "[*] queue..." in line:
+                    new_lines.append(line.replace("[*] queue...", "[Interrupted]"))
+                    changed = True
+                else:
+                    new_lines.append(line)
+            if changed:
+                cur_buf[:] = new_lines
+        except Exception as e:
+            try:
+                from molten.utils import notify_warn
+                notify_warn(self.nvim, f"Failed to update queued cells: {e}")
+            except Exception:
+                print(f"Failed to update queued cells: {e}", file=sys.stderr)
 
     @pynvim.command("MoltenRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
