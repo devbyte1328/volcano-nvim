@@ -621,7 +621,17 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
+
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
+        import io, os, sys, time, signal, traceback, multiprocessing, queue, pickle
+        from types import ModuleType
+
+        def notify_error(nvim, msg):
+            try:
+                nvim.async_call(lambda: nvim.command(f'echohl ErrorMsg | echom "[Eval Error] {msg}" | echohl None'))
+            except Exception:
+                pass
+
         def update_output_block(lines):
             def _do_update():
                 try:
@@ -658,6 +668,7 @@ class Molten:
                     if not found:
                         notify_error(self.nvim, "Cell not found in buffer for evaluation")
                         return
+
                     end_line_current = cell_end
                     out_start, out_end = None, None
                     found_output = False
@@ -669,24 +680,27 @@ class Molten:
                         elif found_output and line == "</output>":
                             out_end = j
                             break
+                    while lines and not lines[-1].strip():
+                        lines.pop()
                     if out_start is not None and out_end is not None:
-                        while lines and not lines[-1].strip():
-                            lines.pop()
                         buf.api.set_lines(out_start + 1, out_end, False, lines)
                         self.nvim.command("undojoin")
                     else:
-                        # Initial insertion
-                        if len(lines) >= 1 and lines[0].startswith(f"[{eval_id}][*]"):
-                            insert_lines = ["<output>"] + lines + ["</output>"]
-                            buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
-                            self.nvim.command("undojoin")
+                        insert_lines = ["<output>"] + lines + ["</output>"]
+                        buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
+                        self.nvim.command("undojoin")
                 except Exception as e:
                     notify_error(self.nvim, f"Stream update error: {e}")
             self.nvim.async_call(_do_update)
 
+        # Persistent global namespace
+        ns = self.global_namespaces.setdefault(bufnr, {
+            "variables": {},
+            "import_lines": []
+        })
+
         if getattr(self, "eval_interrupted", False):
-            lines = [f"[{eval_id}][Kernel_Stopped] 0.00 seconds...",
-                     "Evaluation cancelled by user."]
+            lines = [f"[{eval_id}][Kernel_Stopped] 0.00 seconds...", "Evaluation cancelled by user."]
             update_output_block(lines)
             try:
                 while True:
@@ -696,18 +710,15 @@ class Molten:
             self.eval_interrupted = False
             return
 
-        # Initialise the output region.
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
-        update_output_block(lines_so_far)
-
+        update_output_block(lines_so_far.copy())
         if delay:
             time.sleep(0.5)
 
         output_queue = multiprocessing.Queue()
 
-        def run_eval(code, q):
+        def run_eval(code, q, pre_vars, import_lines):
             class StreamingStdout(io.TextIOBase):
-                """Custom stdout that sends each logical print line without extra spacing."""
                 def __init__(self, qq):
                     self.q = qq
                     self._buffer = ""
@@ -724,18 +735,20 @@ class Molten:
                         self._buffer = ""
 
             error_happened = False
+            globs = {}
+            for k, v in pre_vars.items():
+                globs[k] = v
+            for imp in import_lines:
+                try:
+                    exec(imp, globs)
+                except Exception:
+                    pass
+
             old_stdout, old_stderr = sys.stdout, sys.stderr
             try:
-                stream = StreamingStdout(q)
-                sys.stdout = stream
-                sys.stderr = stream
-
-                globals_dict = {}
-                if isinstance(getattr(self, "global_namespaces", None), dict):
-                    globals_dict = self.global_namespaces.get(bufnr, {})
-
+                sys.stdout = sys.stderr = StreamingStdout(q)
                 try:
-                    exec(code, globals_dict)
+                    exec(code, globs)
                 except BaseException as e:
                     error_happened = True
                     tb = traceback.extract_tb(e.__traceback__)
@@ -745,20 +758,37 @@ class Molten:
                         if frame.filename == "<string>":
                             user_lineno = frame.lineno
                             break
-                    q.put(("line", "---------------------------------------------------------------------------"))
+                    q.put(("line", "-" * 75))
                     q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
                     if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
                         q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
-                        line_text = code_lines[user_lineno - 1].strip()
-                        q.put(("line", f"----> {user_lineno} {line_text}"))
-                        q.put(("line", ""))  # keep one blank before final message
+                        q.put(("line", f"----> {user_lineno} {code_lines[user_lineno - 1].strip()}"))
+                        q.put(("line", ""))
                     q.put(("line", f"{type(e).__name__}: {e}"))
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
+                new_vars = {}
+                new_imports = []
+                for line in code.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("import ") or stripped.startswith("from "):
+                        if stripped not in import_lines and stripped not in new_imports:
+                            new_imports.append(stripped)
+                for k, v in globs.items():
+                    if k in pre_vars or k.startswith("__"):
+                        continue
+                    if isinstance(v, ModuleType):
+                        continue
+                    try:
+                        pickle.dumps(v)
+                    except Exception:
+                        continue
+                    new_vars[k] = v
+                q.put(("globals", (new_vars, new_imports)))
                 q.put(("done", error_happened))
 
-        process = multiprocessing.Process(target=run_eval, args=(expr, output_queue))
+        process = multiprocessing.Process(target=run_eval, args=(expr, output_queue, ns['variables'], ns['import_lines']))
         process.start()
         self.current_eval_process = process
         self.current_eval_pid = process.pid
@@ -781,6 +811,12 @@ class Molten:
                 if got_item:
                     if kind == "line":
                         lines_so_far.append(str(payload))
+                    elif kind == "globals":
+                        new_vars, new_imports = payload
+                        ns["variables"].update(new_vars)
+                        for imp in new_imports:
+                            if imp not in ns["import_lines"]:
+                                ns["import_lines"].append(imp)
                     elif kind == "done":
                         saw_done = True
                         error_occurred = bool(payload)
@@ -791,23 +827,9 @@ class Molten:
                 if now - last_update_time > update_interval:
                     update_output_block(lines_so_far.copy())
                     last_update_time = now
-
                 if not process.is_alive() and saw_done:
                     break
                 if not process.is_alive() and not got_item:
-                    try:
-                        while True:
-                            kind, payload = output_queue.get_nowait()
-                            if kind == "line":
-                                lines_so_far.append(str(payload))
-                            elif kind == "done":
-                                saw_done = True
-                                error_occurred = bool(payload)
-                                break
-                    except queue.Empty:
-                        pass
-                    break
-                if getattr(self, "eval_interrupted", False) and not process.is_alive():
                     break
         finally:
             if process.is_alive():
@@ -823,26 +845,12 @@ class Molten:
         elapsed = max(0.0, time.time() - start_time)
         if getattr(self, "eval_interrupted", False):
             lines_so_far[0] = f"[{eval_id}][Kernel_Stopped] {elapsed:.2f} seconds..."
-            lines_so_far.append("---------------------------------------------------------------------------")
-            lines_so_far.append("KeyboardInterrupt Traceback (most recent call last)")
-            expr_lines = expr.splitlines()
-            interrupted_line_index = 1 if len(expr_lines) > 1 else 0
-            traceback_line_num = start_line + interrupted_line_index + 1
-            lines_so_far.append(f"Cell In[{eval_id}], line {traceback_line_num}")
-            context_start = max(0, interrupted_line_index - 1)
-            context_end = min(len(expr_lines), interrupted_line_index + 2)
-            for i in range(context_start, context_end):
-                prefix = "----> " if i == interrupted_line_index else " "
-                code_line = expr_lines[i].expandtabs(4)
-                rel = (i - context_start) + 1
-                lines_so_far.append(f"{prefix}{rel:>3} {code_line}")
-            lines_so_far.append("")
-            lines_so_far.append("KeyboardInterrupt: ")
-            try:
-                while True:
-                    self.eval_queue.get_nowait()
-            except queue.Empty:
-                pass
+            lines_so_far += [
+                "-" * 75,
+                "KeyboardInterrupt Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {start_line + 1}",
+                "KeyboardInterrupt: ",
+            ]
             self.eval_interrupted = False
         else:
             if error_occurred:
