@@ -30,6 +30,9 @@ import multiprocessing
 import signal
 
 import io
+import pickle
+
+from types import ModuleType
 
 @pynvim.plugin
 class Molten:
@@ -621,10 +624,7 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-        import io, os, sys, time, signal, traceback, multiprocessing, queue, pickle
-        from types import ModuleType
 
         def notify_error(nvim, msg):
             try:
