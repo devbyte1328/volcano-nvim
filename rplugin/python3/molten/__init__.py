@@ -700,13 +700,17 @@ class Molten:
         })
 
         if getattr(self, "eval_interrupted", False):
-            lines = [f"[{eval_id}][Kernel_Stopped] 0.00 seconds...", "Evaluation cancelled by user."]
-            update_output_block(lines)
-            try:
-                while True:
-                    self.eval_queue.get_nowait()
-            except queue.Empty:
-                pass
+            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
+            code_lines = expr.splitlines()
+            stopped_line = code_lines[0].strip() if code_lines else ""
+            lines_so_far += [
+                "---------------------------------------------------------------------------",
+                "KeyboardInterrupt                         Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {start_line + 1}",
+                f"----> {start_line + 1} {stopped_line}",
+                "",
+                "KeyboardInterrupt: ",
+            ]
             self.eval_interrupted = False
             return
 
@@ -843,8 +847,10 @@ class Molten:
             self.current_eval_bufnr = None
 
         elapsed = max(0.0, time.time() - start_time)
+
         if getattr(self, "eval_interrupted", False):
-            lines_so_far[0] = f"[{eval_id}][Kernel_Stopped] {elapsed:.2f} seconds..."
+            # Interrupted by VolcanoInterrupt: keep existing output, add a proper KeyboardInterrupt traceback
+            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
             lines_so_far += [
                 "-" * 75,
                 "KeyboardInterrupt Traceback (most recent call last)",
@@ -852,8 +858,22 @@ class Molten:
                 "KeyboardInterrupt: ",
             ]
             self.eval_interrupted = False
+
+
         else:
-            if error_occurred:
+            if not self.current_eval_process and not saw_done:
+                lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
+                code_lines = expr.splitlines()
+                stopped_line = code_lines[0].strip() if code_lines else ""
+                lines_so_far += [
+                    "---------------------------------------------------------------------------",
+                    "KeyboardInterrupt                         Traceback (most recent call last)",
+                    f"Cell In[{eval_id}], line {start_line + 1}",
+                    f"----> {start_line + 1} {stopped_line}",
+                    "",
+                    "KeyboardInterrupt: ",
+                ]
+            elif error_occurred:
                 lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
             else:
                 lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
@@ -1899,10 +1919,56 @@ class Molten:
         if not in_cell:
             notify_error(self.nvim, "Not in a cell")
 
+
+
+
+
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
-        pass
+        """Interrupt the currently running evaluation without clearing namespaces or counters."""
+        if self.current_eval_process and self.current_eval_process.is_alive():
+            pid = self.current_eval_pid
+            try:
+                os.kill(pid, signal.SIGKILL)
+                self.current_eval_process.join(timeout=1)
+            except ProcessLookupError:
+                pass
+            except Exception as e:
+                pass
+            self.eval_interrupted = True
+
+        # Reset process tracking, but leave namespaces intact
+        self.current_eval_process = None
+        self.current_eval_pid = None
+        self.current_eval_bufnr = None
+
+        # Drain eval queue but keep counters and globals
+        with self.eval_lock:
+            while not self.eval_queue.empty():
+                try:
+                    self.eval_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+        # Update queued cells to show Kernel_Interrupted
+        try:
+            for buf in self.nvim.buffers:
+                lines = list(buf[:])
+                changed = False
+                if getattr(self, "eval_interrupted", False):
+                    lines_so_far[0] = f"[{eval_id}][Kernel_Stopped] {elapsed:.2f} seconds..."
+                    lines_so_far += [
+                        "-" * 75,
+                        "KeyboardInterrupt Traceback (most recent call last)",
+                        f"Cell In[{eval_id}], line {start_line + 1}",
+                        "KeyboardInterrupt: ",
+                    ]
+                    self.eval_interrupted = False
+                if changed:
+                    buf[:] = lines
+        except Exception as e:
+            pass
 
     @pynvim.command("VolcanoRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
@@ -1917,7 +1983,7 @@ class Molten:
             except ProcessLookupError:
                 pass
             except Exception as e:
-                notify_warn(self.nvim, f"Failed to terminate eval process: {e}")
+                pass
         self.current_eval_process = None
         self.current_eval_pid = None
         self.current_eval_bufnr = None
@@ -1957,10 +2023,17 @@ class Molten:
                 if changed:
                     buf[:] = lines
         except Exception as e:
-            try:
-                notify_warn(self.nvim, f"Failed to update queued cells: {e}")
-            except Exception:
-                print(f"Failed to update queued cells: {e}", file=sys.stderr)
+            pass
+
+
+
+
+
+
+
+
+
+
 
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
