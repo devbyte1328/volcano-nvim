@@ -632,7 +632,6 @@ class Molten:
 
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-
         def notify_error(nvim, msg):
             try:
                 nvim.async_call(lambda: nvim.command(f'echohl ErrorMsg | echom "[Eval Error] {msg}" | echohl None'))
@@ -687,6 +686,7 @@ class Molten:
                         elif found_output and line == "</output>":
                             out_end = j
                             break
+                    # strip trailing blank lines
                     while lines and not lines[-1].strip():
                         lines.pop()
                     if out_start is not None and out_end is not None:
@@ -705,6 +705,12 @@ class Molten:
             "variables": {},
             "import_lines": []
         })
+
+        # Remember context for possible interrupt or restart
+        self.current_eval_expr = expr
+        self.current_eval_start_line = start_line
+        self.current_eval_end_line = end_line
+        self.current_eval_eval_id = eval_id
 
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far.copy())
@@ -840,17 +846,58 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
 
-        # Removed all Kernel_* status updates (Interrupted, Stopped, Restarted)
-        if error_occurred:
+        # Determine final status (error, interrupt, restart, or normal completion)
+        if getattr(self, "eval_restarted", False):
+            # Mark restarted state and append KeyboardInterrupt traceback
+            lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
+            code_lines = expr.splitlines()
+            # deduce last non‑blank line for traceback
+            idx = len(code_lines)
+            while idx > 0 and not code_lines[idx - 1].strip():
+                idx -= 1
+            if idx >= 1:
+                user_lineno = idx
+                code_line = code_lines[user_lineno - 1].strip()
+            else:
+                user_lineno = 1
+                code_line = ""
+            lines_so_far += [
+                "-" * 75,
+                "KeyboardInterrupt Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {user_lineno}",
+                f"----> {user_lineno} {code_line}",
+                "",
+                "KeyboardInterrupt",
+            ]
+            self.eval_restarted = False
+        elif getattr(self, "eval_interrupted", False):
+            # Mark interrupted state and append KeyboardInterrupt traceback
+            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
+            code_lines = expr.splitlines()
+            idx = len(code_lines)
+            while idx > 0 and not code_lines[idx - 1].strip():
+                idx -= 1
+            if idx >= 1:
+                user_lineno = idx
+                code_line = code_lines[user_lineno - 1].strip()
+            else:
+                user_lineno = 1
+                code_line = ""
+            lines_so_far += [
+                "-" * 75,
+                "KeyboardInterrupt Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {user_lineno}",
+                f"----> {user_lineno} {code_line}",
+                "",
+                "KeyboardInterrupt",
+            ]
+            self.eval_interrupted = False
+        elif error_occurred:
             lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
         else:
             lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
         update_output_block(lines_so_far.copy())
-
-
-
-
 
 
 
@@ -1910,6 +1957,7 @@ class Molten:
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
         """Interrupt the currently running evaluation without clearing namespaces or counters."""
+        # terminate any running evaluation process
         if self.current_eval_process and self.current_eval_process.is_alive():
             pid = self.current_eval_pid
             try:
@@ -1917,16 +1965,17 @@ class Molten:
                 self.current_eval_process.join(timeout=1)
             except ProcessLookupError:
                 pass
-            except Exception as e:
+            except Exception:
                 pass
+            # flag for _evaluate_and_update to mark Kernel_Interrupted
             self.eval_interrupted = True
 
-        # Reset process tracking, but leave namespaces intact
+        # reset process tracking
         self.current_eval_process = None
         self.current_eval_pid = None
         self.current_eval_bufnr = None
 
-        # Drain eval queue but keep counters and globals
+        # drain evaluation queue but keep counters and globals
         with self.eval_lock:
             while not self.eval_queue.empty():
                 try:
@@ -1934,26 +1983,22 @@ class Molten:
                 except queue.Empty:
                     break
 
-        # Update queued cells to show Kernel_Interrupted
+        # update queued cells to reflect that they were interrupted
         try:
             for buf in self.nvim.buffers:
                 lines = list(buf[:])
                 changed = False
-                if getattr(self, "eval_interrupted", False):
-                    lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-                    lines_so_far += [
-                        "-" * 75,
-                        "KeyboardInterrupt Traceback (most recent call last)",
-                        f"Cell In[{eval_id}], line {start_line + 1}",
-                        "KeyboardInterrupt: ",
-                    ]
-                    self.eval_interrupted = False
+                for i, line in enumerate(lines):
+                    # replace queued status indicator with Kernel_Interrupted
+                    if "[*]" in line and "queue" in line:
+                        idx = line.find("[*]")
+                        prefix = line[:idx]
+                        lines[i] = f"{prefix}[Kernel_Interrupted]"
+                        changed = True
                 if changed:
                     buf[:] = lines
-        except Exception as e:
+        except Exception:
             pass
-
-
 
 
 
@@ -1963,7 +2008,7 @@ class Molten:
     @nvimui  # type: ignore
     def command_restart(self, args, bang) -> None:
         """Restart the entire Molten kernel environment and reset eval state."""
-
+        # terminate any running evaluation process
         if self.current_eval_process and self.current_eval_process.is_alive():
             pid = self.current_eval_pid
             try:
@@ -1971,13 +2016,18 @@ class Molten:
                 self.current_eval_process.join(timeout=1)
             except ProcessLookupError:
                 pass
-            except Exception as e:
+            except Exception:
                 pass
+            # flag for _evaluate_and_update to mark Kernel_Restarted
+            self.eval_restarted = True
+
+        # reset process tracking and interrupt flags
         self.current_eval_process = None
         self.current_eval_pid = None
         self.current_eval_bufnr = None
         self.eval_interrupted = False
 
+        # reset evaluation counter and clear queue
         with self.eval_lock:
             self.eval_counter = 1
             while not self.eval_queue.empty():
@@ -1986,8 +2036,10 @@ class Molten:
                 except queue.Empty:
                     break
 
+        # reset persistent namespaces
         self.global_namespaces.clear()
 
+        # restart all existing Molten kernels
         restarted = []
         for name, kernel in list(self.molten_kernels.items()):
             try:
@@ -1998,24 +2050,25 @@ class Molten:
                 new_kernel = MoltenKernel(self.nvim, kernel.name, kernel.options)
                 self.molten_kernels[name] = new_kernel
                 restarted.append(name)
-            except Exception as e:
+            except Exception:
                 pass
 
+        # update queued cells to reflect that they were restarted
         try:
             for buf in self.nvim.buffers:
                 lines = list(buf[:])
                 changed = False
                 for i, line in enumerate(lines):
-                    if "[*] queue..." in line:
-                        lines[i] = line.replace("[*] queue...", "[Kernel_Restarted]")
+                    # replace queued status indicator with Kernel_Restarted
+                    if "[*]" in line and "queue" in line:
+                        idx = line.find("[*]")
+                        prefix = line[:idx]
+                        lines[i] = f"{prefix}[Kernel_Restarted]"
                         changed = True
                 if changed:
                     buf[:] = lines
-        except Exception as e:
+        except Exception:
             pass
-
-
-
 
 
 
