@@ -135,7 +135,7 @@ return {
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Restarted /\v\[Kernel_Restarted\]/ containedin=IPYNBOutputText
-                        syntax match IPYNBEvalInterrupted /\v\[Interrupted\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalKernel_Interrupted /\v\[Kernel_Interrupted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -150,7 +150,7 @@ return {
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
                         highlight IPYNBEvalKernel_Restarted guifg=red ctermfg=196
-                        highlight IPYNBEvalInterrupted guifg=red ctermfg=196
+                        highlight IPYNBEvalKernel_Interrupted guifg=red ctermfg=196
                         highlight IPYNBEvalKernel_Stopped guifg=red ctermfg=196
                     ]])
                 end)
@@ -352,7 +352,7 @@ return {
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Restarted /\v\[Kernel_Restarted\]/ containedin=IPYNBOutputText
-                        syntax match IPYNBEvalInterrupted /\v\[Interrupted\]/ containedin=IPYNBOutputText
+                        syntax match IPYNBEvalKernel_Interrupted /\v\[Kernel_Interrupted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
                         " Tag highlighting (dark gray, italic)
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
@@ -367,7 +367,7 @@ return {
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
                         highlight IPYNBEvalKernel_Restarted guifg=red ctermfg=196
-                        highlight IPYNBEvalInterrupted guifg=red ctermfg=196
+                        highlight IPYNBEvalKernel_Interrupted guifg=red ctermfg=196
                         highlight IPYNBEvalKernel_Stopped guifg=red ctermfg=196
                     ]])
                 end)
