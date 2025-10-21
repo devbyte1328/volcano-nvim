@@ -624,13 +624,6 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
-
-
-
-
-
-
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         def notify_error(nvim, msg):
             try:
@@ -899,12 +892,6 @@ class Molten:
 
         update_output_block(lines_so_far.copy())
 
-
-
-
-
-
-
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
     def command_init(self, args: List[str]) -> None:
@@ -1066,10 +1053,6 @@ class Molten:
 
         except Exception as e:
             self.nvim.command(f"echoerr 'Failed to save notebook: {e}'")
-
-
-
-
 
     @pynvim.command("MoltenDeinit", nargs=0, sync=True)  # type: ignore
     @nvimui  # type: ignore
@@ -1944,15 +1927,6 @@ class Molten:
         if not in_cell:
             notify_error(self.nvim, "Not in a cell")
 
-
-
-
-
-
-
-
-
-
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
@@ -1999,10 +1973,6 @@ class Molten:
                     buf[:] = lines
         except Exception:
             pass
-
-
-
-
 
     @pynvim.command("VolcanoRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
@@ -2069,13 +2039,6 @@ class Molten:
                     buf[:] = lines
         except Exception:
             pass
-
-
-
-
-
-
-
 
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
