@@ -1907,6 +1907,8 @@ class Molten:
     @pynvim.command("VolcanoRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
     def command_restart(self, args, bang) -> None:
+        """Restart the entire Molten kernel environment and reset eval state."""
+
         if self.current_eval_process and self.current_eval_process.is_alive():
             pid = self.current_eval_pid
             try:
@@ -1914,32 +1916,48 @@ class Molten:
                 self.current_eval_process.join(timeout=1)
             except ProcessLookupError:
                 pass
+            except Exception as e:
+                notify_warn(self.nvim, f"Failed to terminate eval process: {e}")
+        self.current_eval_process = None
+        self.current_eval_pid = None
+        self.current_eval_bufnr = None
+        self.eval_interrupted = False
 
-            self.eval_interrupted = True
+        with self.eval_lock:
+            self.eval_counter = 1
+            while not self.eval_queue.empty():
+                try:
+                    self.eval_queue.get_nowait()
+                except queue.Empty:
+                    break
 
-            if self.current_eval_bufnr in self.global_namespaces:
-                self.global_namespaces.pop(self.current_eval_bufnr, None)
+        self.global_namespaces.clear()
 
-            self.current_eval_process = None
-            self.current_eval_pid = None
-            self.current_eval_bufnr = None
+        restarted = []
+        for name, kernel in list(self.molten_kernels.items()):
+            try:
+                kernel.shutdown()
+            except Exception:
+                pass
+            try:
+                new_kernel = MoltenKernel(self.nvim, kernel.name, kernel.options)
+                self.molten_kernels[name] = new_kernel
+                restarted.append(name)
+            except Exception as e:
+                pass
 
         try:
-            cur_buf = self.nvim.current.buffer
-            lines = list(cur_buf[:])
-            new_lines = []
-            changed = False
-            for line in lines:
-                if "[*] queue..." in line:
-                    new_lines.append(line.replace("[*] queue...", "[Kernel_Stopped]"))
-                    changed = True
-                else:
-                    new_lines.append(line)
-            if changed:
-                cur_buf[:] = new_lines
+            for buf in self.nvim.buffers:
+                lines = list(buf[:])
+                changed = False
+                for i, line in enumerate(lines):
+                    if "[*] queue..." in line:
+                        lines[i] = line.replace("[*] queue...", "[Kernel_Restarted]")
+                        changed = True
+                if changed:
+                    buf[:] = lines
         except Exception as e:
             try:
-                from molten.utils import notify_warn
                 notify_warn(self.nvim, f"Failed to update queued cells: {e}")
             except Exception:
                 print(f"Failed to update queued cells: {e}", file=sys.stderr)
