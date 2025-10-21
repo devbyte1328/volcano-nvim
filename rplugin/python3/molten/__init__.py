@@ -624,6 +624,13 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
+
+
+
+
+
+
+
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
 
         def notify_error(nvim, msg):
@@ -698,21 +705,6 @@ class Molten:
             "variables": {},
             "import_lines": []
         })
-
-        if getattr(self, "eval_interrupted", False):
-            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-            code_lines = expr.splitlines()
-            stopped_line = code_lines[0].strip() if code_lines else ""
-            lines_so_far += [
-                "---------------------------------------------------------------------------",
-                "KeyboardInterrupt                         Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {start_line + 1}",
-                f"----> {start_line + 1} {stopped_line}",
-                "",
-                "KeyboardInterrupt: ",
-            ]
-            self.eval_interrupted = False
-            return
 
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far.copy())
@@ -848,37 +840,23 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
 
-        if getattr(self, "eval_interrupted", False):
-            # Interrupted by VolcanoInterrupt: keep existing output, add a proper KeyboardInterrupt traceback
-            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-            lines_so_far += [
-                "-" * 75,
-                "KeyboardInterrupt Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {start_line + 1}",
-                "KeyboardInterrupt: ",
-            ]
-            self.eval_interrupted = False
-
-
+        # Removed all Kernel_* status updates (Interrupted, Stopped, Restarted)
+        if error_occurred:
+            lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
         else:
-            if not self.current_eval_process and not saw_done:
-                lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
-                code_lines = expr.splitlines()
-                stopped_line = code_lines[0].strip() if code_lines else ""
-                lines_so_far += [
-                    "---------------------------------------------------------------------------",
-                    "KeyboardInterrupt                         Traceback (most recent call last)",
-                    f"Cell In[{eval_id}], line {start_line + 1}",
-                    f"----> {start_line + 1} {stopped_line}",
-                    "",
-                    "KeyboardInterrupt: ",
-                ]
-            elif error_occurred:
-                lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
-            else:
-                lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+            lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
         update_output_block(lines_so_far.copy())
+
+
+
+
+
+
+
+
+
+
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
@@ -1923,6 +1901,11 @@ class Molten:
 
 
 
+
+
+
+
+
     @pynvim.command("VolcanoInterrupt", nargs="*", sync=True)
     @nvimui  # type: ignore
     def command_interrupt(self, args) -> None:
@@ -1957,7 +1940,7 @@ class Molten:
                 lines = list(buf[:])
                 changed = False
                 if getattr(self, "eval_interrupted", False):
-                    lines_so_far[0] = f"[{eval_id}][Kernel_Stopped] {elapsed:.2f} seconds..."
+                    lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
                     lines_so_far += [
                         "-" * 75,
                         "KeyboardInterrupt Traceback (most recent call last)",
@@ -1969,6 +1952,12 @@ class Molten:
                     buf[:] = lines
         except Exception as e:
             pass
+
+
+
+
+
+
 
     @pynvim.command("VolcanoRestart", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
