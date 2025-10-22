@@ -624,12 +624,14 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
+
+
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-        def notify_error(nvim, msg):
-            try:
-                nvim.async_call(lambda: nvim.command(f'echohl ErrorMsg | echom "[Eval Error] {msg}" | echohl None'))
-            except Exception:
-                pass
+        """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
+
+        def notify_error_async(msg):
+            self.nvim.async_call(lambda: self.nvim.command(
+                f'echohl ErrorMsg | echom "[Eval Error] {msg}" | echohl None'))
 
         def update_output_block(lines):
             def _do_update():
@@ -665,7 +667,7 @@ class Molten:
                                 in_cell = False
                                 code_index = 0
                     if not found:
-                        notify_error(self.nvim, "Cell not found in buffer for evaluation")
+                        notify_error_async("Cell not found in buffer for evaluation")
                         return
 
                     end_line_current = cell_end
@@ -679,7 +681,6 @@ class Molten:
                         elif found_output and line == "</output>":
                             out_end = j
                             break
-                    # strip trailing blank lines
                     while lines and not lines[-1].strip():
                         lines.pop()
                     if out_start is not None and out_end is not None:
@@ -690,16 +691,39 @@ class Molten:
                         buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
                         self.nvim.command("undojoin")
                 except Exception as e:
-                    notify_error(self.nvim, f"Stream update error: {e}")
+                    notify_error_async(f"Stream update error: {e}")
             self.nvim.async_call(_do_update)
 
-        # Persistent global namespace
-        ns = self.global_namespaces.setdefault(bufnr, {
-            "variables": {},
-            "import_lines": []
-        })
+        # ---- Persistent global namespace setup (compute path on main thread) ----
+        ns_result = []
+        ns_ready = threading.Event()
 
-        # Remember context for possible interrupt or restart
+        def _compute_ns_path_on_main():
+            try:
+                fname = self.nvim.eval("expand('%:p')")
+                if not fname:
+                    fname = f"buffer_{bufnr}"
+                checkpoint_dir = os.path.dirname(fname)
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                ns_path = os.path.join(checkpoint_dir, f"{os.path.basename(fname)}.pkl")
+                if os.path.exists(ns_path):
+                    try:
+                        with open(ns_path, "rb") as f:
+                            ns = pickle.load(f)
+                    except Exception:
+                        ns = {"variables": {}, "import_lines": []}
+                else:
+                    ns = {"variables": {}, "import_lines": []}
+                self.global_namespaces[bufnr] = ns
+                ns_result.append((ns_path, ns))
+            finally:
+                ns_ready.set()
+
+        self.nvim.async_call(_compute_ns_path_on_main)
+        ns_ready.wait()
+        ns_path, ns = ns_result[0]
+
+        # ---- Prepare status and queue ----
         self.current_eval_expr = expr
         self.current_eval_start_line = start_line
         self.current_eval_end_line = end_line
@@ -708,11 +732,14 @@ class Molten:
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far.copy())
         if delay:
-            time.sleep(0.5)
+            time.sleep(0.3)
 
         output_queue = multiprocessing.Queue()
 
-        def run_eval(code, q, pre_vars, import_lines):
+        # ---- Worker process that executes code ----
+        def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
+            import codeop
+
             class StreamingStdout(io.TextIOBase):
                 def __init__(self, qq):
                     self.q = qq
@@ -729,61 +756,136 @@ class Molten:
                         self.q.put(("line", self._buffer))
                         self._buffer = ""
 
+            def picklable_vars(globs, baseline_keys):
+                out = {}
+                for k, v in globs.items():
+                    if k in baseline_keys or k.startswith("__"):
+                        continue
+                    if isinstance(v, ModuleType):
+                        # don't pickle modules; they are re-applied via import_lines
+                        continue
+                    try:
+                        pickle.dumps(v)
+                    except Exception:
+                        continue
+                    out[k] = v
+                return out
+
+            def extract_imports_from_src(src):
+                imps = []
+                for _line in src.splitlines():
+                    s = _line.strip()
+                    if s.startswith("import ") or s.startswith("from "):
+                        imps.append(s)
+                return imps
+
+            def atomic_pickle_write(path, payload):
+                tmp = path + ".tmp"
+                with open(tmp, "wb") as f:
+                    pickle.dump(payload, f)
+                os.replace(tmp, path)
+
             error_happened = False
+
+            # Start environment
             globs = {}
-            for k, v in pre_vars.items():
-                globs[k] = v
-            for imp in import_lines:
+            globs.update(pre_vars)
+
+            # Re-apply prior imports (so modules like `time` exist after reload)
+            imports_live = list(import_lines_initial) if import_lines_initial else []
+            for imp in imports_live:
                 try:
                     exec(imp, globs)
                 except Exception:
                     pass
 
             old_stdout, old_stderr = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = StreamingStdout(q)
+
+            compiler = codeop.CommandCompiler()
+            lines = code.splitlines()
+            buf_accum = []
+            baseline_keys = set(globs.keys())
+            start_idx = 0
+
             try:
-                sys.stdout = sys.stderr = StreamingStdout(q)
-                try:
-                    exec(code, globs)
-                except BaseException as e:
-                    error_happened = True
-                    tb = traceback.extract_tb(e.__traceback__)
-                    code_lines = code.splitlines()
-                    user_lineno = None
-                    for frame in tb:
-                        if frame.filename == "<string>":
-                            user_lineno = frame.lineno
-                            break
-                    q.put(("line", "-" * 75))
-                    q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
-                    if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
-                        q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
-                        q.put(("line", f"----> {user_lineno} {code_lines[user_lineno - 1].strip()}"))
-                        q.put(("line", ""))
-                    q.put(("line", f"{type(e).__name__}: {e}"))
+                for i, line in enumerate(lines):
+                    buf_accum.append(line)
+                    src = "\n".join(buf_accum)
+                    codeobj = compiler(src, filename="<string>", symbol="exec")
+                    if codeobj is None:
+                        continue  # waiting for a complete statement
+
+                    # Execute a single complete chunk
+                    try:
+                        exec(codeobj, globs)
+                    except BaseException as e:
+                        error_happened = True
+                        tb = traceback.extract_tb(e.__traceback__)
+                        user_lineno = None
+                        for frame in tb:
+                            if frame.filename == "<string>":
+                                user_lineno = frame.lineno
+                                break
+                        q.put(("line", "-" * 75))
+                        q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
+                        if user_lineno is not None:
+                            chunk_lines = src.splitlines()
+                            if 1 <= user_lineno <= len(chunk_lines):
+                                q.put(("line", f"Cell In[{eval_id}], line {user_lineno + start_idx}"))
+                                q.put(("line", f"----> {user_lineno + start_idx} {chunk_lines[user_lineno - 1].strip()}"))
+                                q.put(("line", ""))
+                        q.put(("line", f"{type(e).__name__}: {e}"))
+                        break
+
+                    # Persist after each executed chunk:
+                    # 1) new imports from this chunk
+                    new_imps = extract_imports_from_src(src)
+                    for imp in new_imps:
+                        if imp not in imports_live:
+                            imports_live.append(imp)
+
+                    # 2) new picklable variables
+                    new_vars = picklable_vars(globs, baseline_keys)
+                    baseline_keys = set(globs.keys())
+
+                    # 3) send to parent for RAM mirror
+                    q.put(("globals", (new_vars, new_imps)))
+
+                    # 4) persist to disk immediately (atomic write)
+                    try:
+                        if os.path.exists(ns_path):
+                            try:
+                                with open(ns_path, "rb") as f:
+                                    ns_disk = pickle.load(f)
+                            except Exception:
+                                ns_disk = {"variables": {}, "import_lines": []}
+                        else:
+                            ns_disk = {"variables": {}, "import_lines": []}
+
+                        ns_disk["variables"].update(new_vars)
+                        # merge imports uniquely
+                        for imp in imports_live:
+                            if imp not in ns_disk.get("import_lines", []):
+                                ns_disk.setdefault("import_lines", []).append(imp)
+
+                        atomic_pickle_write(ns_path, ns_disk)
+                    except Exception as _e:
+                        q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
+
+                    # Prepare for next chunk
+                    buf_accum = []
+                    start_idx = i + 1
+
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
-                new_vars = {}
-                new_imports = []
-                for line in code.splitlines():
-                    stripped = line.strip()
-                    if stripped.startswith("import ") or stripped.startswith("from "):
-                        if stripped not in import_lines and stripped not in new_imports:
-                            new_imports.append(stripped)
-                for k, v in globs.items():
-                    if k in pre_vars or k.startswith("__"):
-                        continue
-                    if isinstance(v, ModuleType):
-                        continue
-                    try:
-                        pickle.dumps(v)
-                    except Exception:
-                        continue
-                    new_vars[k] = v
-                q.put(("globals", (new_vars, new_imports)))
                 q.put(("done", error_happened))
 
-        process = multiprocessing.Process(target=run_eval, args=(expr, output_queue, ns['variables'], ns['import_lines']))
+        process = multiprocessing.Process(
+            target=run_eval,
+            args=(expr, output_queue, ns["variables"], ns.get("import_lines", []), ns_path),
+        )
         process.start()
         self.current_eval_process = process
         self.current_eval_pid = process.pid
@@ -810,7 +912,7 @@ class Molten:
                         new_vars, new_imports = payload
                         ns["variables"].update(new_vars)
                         for imp in new_imports:
-                            if imp not in ns["import_lines"]:
+                            if imp not in ns.setdefault("import_lines", []):
                                 ns["import_lines"].append(imp)
                     elif kind == "done":
                         saw_done = True
@@ -839,51 +941,12 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
 
-        # Determine final status (error, interrupt, restart, or normal completion)
+        # ---- Determine status ----
         if getattr(self, "eval_restarted", False):
-            # Mark restarted state and append KeyboardInterrupt traceback
             lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
-            code_lines = expr.splitlines()
-            # deduce last non‑blank line for traceback
-            idx = len(code_lines)
-            while idx > 0 and not code_lines[idx - 1].strip():
-                idx -= 1
-            if idx >= 1:
-                user_lineno = idx
-                code_line = code_lines[user_lineno - 1].strip()
-            else:
-                user_lineno = 1
-                code_line = ""
-            lines_so_far += [
-                "-" * 75,
-                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {user_lineno}",
-                f"----> {user_lineno} {code_line}",
-                "",
-                "KeyboardInterrupt",
-            ]
             self.eval_restarted = False
         elif getattr(self, "eval_interrupted", False):
-            # Mark interrupted state and append KeyboardInterrupt traceback
             lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-            code_lines = expr.splitlines()
-            idx = len(code_lines)
-            while idx > 0 and not code_lines[idx - 1].strip():
-                idx -= 1
-            if idx >= 1:
-                user_lineno = idx
-                code_line = code_lines[user_lineno - 1].strip()
-            else:
-                user_lineno = 1
-                code_line = ""
-            lines_so_far += [
-                "-" * 75,
-                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {user_lineno}",
-                f"----> {user_lineno} {code_line}",
-                "",
-                "KeyboardInterrupt",
-            ]
             self.eval_interrupted = False
         elif error_occurred:
             lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
@@ -891,6 +954,15 @@ class Molten:
             lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
 
         update_output_block(lines_so_far.copy())
+
+        # ---- Final persist of namespace in parent RAM -> disk (atomic) ----
+        try:
+            tmp = ns_path + ".tmp"
+            with open(tmp, "wb") as f:
+                pickle.dump(ns, f)
+            os.replace(tmp, ns_path)
+        except Exception as e:
+            self.nvim.async_call(lambda: notify_warn(self.nvim, f"Failed to save namespace: {e}"))
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
