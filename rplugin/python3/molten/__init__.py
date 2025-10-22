@@ -34,6 +34,8 @@ import pickle
 
 from types import ModuleType
 
+import codeop
+
 @pynvim.plugin
 class Molten:
     """The plugin class. Provides an interface for interacting with the plugin via vim functions,
@@ -624,8 +626,6 @@ class Molten:
             self._evaluate_and_update(**item)
             self.eval_queue.task_done()
 
-
-
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
 
@@ -694,7 +694,7 @@ class Molten:
                     notify_error_async(f"Stream update error: {e}")
             self.nvim.async_call(_do_update)
 
-        # ---- Persistent global namespace setup (compute path on main thread) ----
+        # ---- Persistent global namespace setup ----
         ns_result = []
         ns_ready = threading.Event()
 
@@ -723,7 +723,7 @@ class Molten:
         ns_ready.wait()
         ns_path, ns = ns_result[0]
 
-        # ---- Prepare status and queue ----
+        # ---- Prepare state ----
         self.current_eval_expr = expr
         self.current_eval_start_line = start_line
         self.current_eval_end_line = end_line
@@ -736,9 +736,8 @@ class Molten:
 
         output_queue = multiprocessing.Queue()
 
-        # ---- Worker process that executes code ----
+        # ---- Worker process ----
         def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
-            import codeop
 
             class StreamingStdout(io.TextIOBase):
                 def __init__(self, qq):
@@ -762,7 +761,6 @@ class Molten:
                     if k in baseline_keys or k.startswith("__"):
                         continue
                     if isinstance(v, ModuleType):
-                        # don't pickle modules; they are re-applied via import_lines
                         continue
                     try:
                         pickle.dumps(v)
@@ -786,12 +784,9 @@ class Molten:
                 os.replace(tmp, path)
 
             error_happened = False
-
-            # Start environment
             globs = {}
             globs.update(pre_vars)
 
-            # Re-apply prior imports (so modules like `time` exist after reload)
             imports_live = list(import_lines_initial) if import_lines_initial else []
             for imp in imports_live:
                 try:
@@ -814,45 +809,35 @@ class Molten:
                     src = "\n".join(buf_accum)
                     codeobj = compiler(src, filename="<string>", symbol="exec")
                     if codeobj is None:
-                        continue  # waiting for a complete statement
-
-                    # Execute a single complete chunk
+                        continue
                     try:
                         exec(codeobj, globs)
                     except BaseException as e:
                         error_happened = True
                         tb = traceback.extract_tb(e.__traceback__)
+                        code_lines = code.splitlines()
                         user_lineno = None
                         for frame in tb:
                             if frame.filename == "<string>":
-                                user_lineno = frame.lineno
+                                user_lineno = frame.lineno + start_idx
                                 break
                         q.put(("line", "-" * 75))
                         q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
-                        if user_lineno is not None:
-                            chunk_lines = src.splitlines()
-                            if 1 <= user_lineno <= len(chunk_lines):
-                                q.put(("line", f"Cell In[{eval_id}], line {user_lineno + start_idx}"))
-                                q.put(("line", f"----> {user_lineno + start_idx} {chunk_lines[user_lineno - 1].strip()}"))
-                                q.put(("line", ""))
+                        if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
+                            q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
+                            q.put(("line", f"----> {user_lineno} {code_lines[user_lineno - 1].strip()}"))
+                            q.put(("line", ""))
                         q.put(("line", f"{type(e).__name__}: {e}"))
                         break
 
-                    # Persist after each executed chunk:
-                    # 1) new imports from this chunk
                     new_imps = extract_imports_from_src(src)
                     for imp in new_imps:
                         if imp not in imports_live:
                             imports_live.append(imp)
-
-                    # 2) new picklable variables
                     new_vars = picklable_vars(globs, baseline_keys)
                     baseline_keys = set(globs.keys())
-
-                    # 3) send to parent for RAM mirror
                     q.put(("globals", (new_vars, new_imps)))
 
-                    # 4) persist to disk immediately (atomic write)
                     try:
                         if os.path.exists(ns_path):
                             try:
@@ -862,21 +847,16 @@ class Molten:
                                 ns_disk = {"variables": {}, "import_lines": []}
                         else:
                             ns_disk = {"variables": {}, "import_lines": []}
-
                         ns_disk["variables"].update(new_vars)
-                        # merge imports uniquely
                         for imp in imports_live:
                             if imp not in ns_disk.get("import_lines", []):
                                 ns_disk.setdefault("import_lines", []).append(imp)
-
                         atomic_pickle_write(ns_path, ns_disk)
                     except Exception as _e:
                         q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
 
-                    # Prepare for next chunk
                     buf_accum = []
                     start_idx = i + 1
-
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
@@ -941,13 +921,51 @@ class Molten:
 
         elapsed = max(0.0, time.time() - start_time)
 
-        # ---- Determine status ----
+        # ---- Determine status (with traceback restoration) ----
         if getattr(self, "eval_restarted", False):
             lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
+            code_lines = expr.splitlines()
+            idx = len(code_lines)
+            while idx > 0 and not code_lines[idx - 1].strip():
+                idx -= 1
+            if idx >= 1:
+                user_lineno = idx
+                code_line = code_lines[user_lineno - 1].strip()
+            else:
+                user_lineno = 1
+                code_line = ""
+            lines_so_far += [
+                "-" * 75,
+                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {user_lineno}",
+                f"----> {user_lineno} {code_line}",
+                "",
+                "KeyboardInterrupt",
+            ]
             self.eval_restarted = False
+
         elif getattr(self, "eval_interrupted", False):
             lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
+            code_lines = expr.splitlines()
+            idx = len(code_lines)
+            while idx > 0 and not code_lines[idx - 1].strip():
+                idx -= 1
+            if idx >= 1:
+                user_lineno = idx
+                code_line = code_lines[user_lineno - 1].strip()
+            else:
+                user_lineno = 1
+                code_line = ""
+            lines_so_far += [
+                "-" * 75,
+                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
+                f"Cell In[{eval_id}], line {user_lineno}",
+                f"----> {user_lineno} {code_line}",
+                "",
+                "KeyboardInterrupt",
+            ]
             self.eval_interrupted = False
+
         elif error_occurred:
             lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
         else:
@@ -955,14 +973,14 @@ class Molten:
 
         update_output_block(lines_so_far.copy())
 
-        # ---- Final persist of namespace in parent RAM -> disk (atomic) ----
+        # ---- Final persist ----
         try:
             tmp = ns_path + ".tmp"
             with open(tmp, "wb") as f:
                 pickle.dump(ns, f)
             os.replace(tmp, ns_path)
         except Exception as e:
-            self.nvim.async_call(lambda: notify_warn(self.nvim, f"Failed to save namespace: {e}"))
+            self.nvim.async_call(lambda: notify_error_async(f"Failed to save namespace: {e}"))
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
