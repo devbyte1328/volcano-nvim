@@ -856,7 +856,7 @@ class Molten:
                 code_line = ""
             lines_so_far += [
                 "-" * 75,
-                "KeyboardInterrupt Traceback (most recent call last)",
+                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
                 f"Cell In[{eval_id}], line {user_lineno}",
                 f"----> {user_lineno} {code_line}",
                 "",
@@ -878,7 +878,7 @@ class Molten:
                 code_line = ""
             lines_so_far += [
                 "-" * 75,
-                "KeyboardInterrupt Traceback (most recent call last)",
+                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
                 f"Cell In[{eval_id}], line {user_lineno}",
                 f"----> {user_lineno} {code_line}",
                 "",
