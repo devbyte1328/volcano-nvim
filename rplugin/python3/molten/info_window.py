@@ -9,7 +9,7 @@ def create_info_window(nvim, molten_kernels, buffers, initialized):
 
     info_buf[0] = " press q or <esc> to close this window"
     info_buf.api.add_highlight(-1, "Comment", 0, 0, -1)
-    info_buf.append(["", " Molten Info"])
+    info_buf.append(["", " Volcano Info"])
     info_buf.api.add_highlight(-1, "Title", len(info_buf) - 1, 0, -1)
 
     # Status
@@ -33,9 +33,14 @@ def create_info_window(nvim, molten_kernels, buffers, initialized):
             running_buffers = map(lambda x: str(x.number), m_kernel.buffers)
             running = f"(running, bufnr: [{', '.join(running_buffers)}])"
             spec = m_kernel.runtime.kernel_manager.kernel_spec
+            # Label default venv kernel nicely if it's the one in ~/.config/nvim/venv
+            display_name = m_kernel.kernel_id
+            if spec.resource_dir.endswith("/.config/nvim/venv/share/jupyter/kernels/python3"):
+                display_name = "default volcano python3"
             draw_kernel_info(
-                info_buf, running, m_kernel.kernel_id, spec.language, spec.argv, spec.resource_dir
+                info_buf, running, display_name, spec.language, spec.argv, spec.resource_dir
             )
+
 
     if len(other_buf_kernels) > 0:
         info_buf.append(

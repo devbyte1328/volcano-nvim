@@ -1288,7 +1288,7 @@ class Molten:
 
         self._deinit_buffer(kernels)
 
-    @pynvim.command("MoltenInfo", nargs=0, sync=True)  # type: ignore
+    @pynvim.command("VolcanoInfo", nargs=0, sync=True)  # type: ignore
     @nvimui  # type: ignore
     def command_info(self) -> None:
         create_info_window(self.nvim, self.molten_kernels, self.buffers, self.initialized)
