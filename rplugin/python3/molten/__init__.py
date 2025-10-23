@@ -618,7 +618,7 @@ class Molten:
             "delay": delay, 
         })
 
-    def _evaluate_all_cells(self):
+    def _evaluate_all_cells(self, up_to_cursor = None):
         buf_obj = self.nvim.current.buffer
         win = self.nvim.current.window
         win.cursor = (1, 0)
@@ -644,9 +644,12 @@ class Molten:
                     offset += 4
                     first_cell = False
                 else:
-                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell())
-                    offset += 8
+                    if up_to_cursor != None and up_to_cursor < offset:
+                        break
+                    else:
+                        self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
+                        self.nvim.async_call(lambda: self._evaluate_cell())
+                        offset += 8
 
                 time.sleep(0.04)
 
@@ -2179,6 +2182,15 @@ class Molten:
     def command_restart_evaluate_all(self, args, bang) -> None:
         self._restart_kernel()
         self._evaluate_all_cells()
+
+    @pynvim.command("VolcanoRestartAndEvaluateUpToCursor", nargs="*", sync=True, bang=True)
+    @nvimui  # type: ignore
+    def command_restart_evaluate_all(self, args, bang) -> None:
+        buf_obj = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_row = self.nvim.current.window.cursor[0]
+        self._restart_kernel()
+        self._evaluate_all_cells(cursor_row)
 
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
