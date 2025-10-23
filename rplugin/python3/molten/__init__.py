@@ -1437,30 +1437,27 @@ class Molten:
 
         buf = buf_obj[:]
         cursor_line = win.cursor[0] - 1 
-
         def run():
             cell_lines = []
             for i in range(cursor_line, len(buf)):
                 if buf[i].strip() == "<cell>":
                     cell_lines.append(i)
-
+            
             first_cell = True
-            first_offset = 4
-            offset_accumulator = 0 
+            offset = 0
 
             for cell_line in cell_lines:
-                adjusted_line = cell_line + offset_accumulator
-
                 if first_cell:
-                    self.nvim.async_call(lambda l=adjusted_line: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
                     self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
+                    offset += 8
                     first_cell = False
                 else:
-                    self.nvim.async_call(lambda l=adjusted_line + first_offset: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
                     self.nvim.async_call(lambda: self._evaluate_cell())
-                    offset_accumulator += first_offset
+                    offset += 8
 
-                time.sleep(0.01)
+                time.sleep(0.04)
 
         threading.Thread(target=run, daemon=True).start()
 
