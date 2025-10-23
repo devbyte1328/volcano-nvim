@@ -200,6 +200,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
 	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
 	vim.keymap.set("n", "<leader>rkdo<CR>", function() vim.cmd("VolcanoRestartAndDeleteAllOutput") end, { desc = "Restart Kernel and Clear Output" })
+	vim.keymap.set("n", "<leader><leader>rk<CR>", function() vim.cmd("VolcanoRestartAndEvaluateAll") end, { desc = "Restart Kernel and Run All Cells" })
   end,
 })
 ```
@@ -418,6 +419,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
 	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
 	vim.keymap.set("n", "<leader>rkdo<CR>", function() vim.cmd("VolcanoRestartAndDeleteAllOutput") end, { desc = "Restart Kernel and Clear Output" })
+	vim.keymap.set("n", "<leader><leader>rk<CR>", function() vim.cmd("VolcanoRestartAndEvaluateAll") end, { desc = "Restart Kernel and Run All Cells" })
   end,
 })
 ```

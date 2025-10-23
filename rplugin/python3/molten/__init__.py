@@ -641,7 +641,7 @@ class Molten:
                 if first_cell:
                     self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
                     self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
-                    offset += 8
+                    offset += 4
                     first_cell = False
                 else:
                     self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
@@ -2173,6 +2173,12 @@ class Molten:
         cursor_row = self.nvim.current.window.cursor[0]
         self._restart_kernel()
         buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
+
+    @pynvim.command("VolcanoRestartAndEvaluateAll", nargs="*", sync=True, bang=True)
+    @nvimui  # type: ignore
+    def command_restart_evaluate_all(self, args, bang) -> None:
+        self._restart_kernel()
+        self._evaluate_all_cells()
 
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
