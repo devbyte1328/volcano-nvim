@@ -199,6 +199,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
 	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
 	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
+	vim.keymap.set("n", "<leader>rkdo<CR>", function() vim.cmd("VolcanoRestartAndDeleteAllOutput") end, { desc = "Restart Kernel and Clear Output" })
   end,
 })
 ```
@@ -416,6 +417,7 @@ vim.api.nvim_create_autocmd("FileType", {
 	vim.keymap.set("n", "<leader>pc<CR>", function() vim.cmd("VolcanoPasteCell") end, { desc = "Paste cell" })
 	vim.keymap.set("n", "<leader>ik<CR>", function() vim.cmd("VolcanoInterrupt") end, { desc = "Interrupt Kernel" })
 	vim.keymap.set("n", "<leader>rk<CR>", function() vim.cmd("VolcanoRestart") end, { desc = "Restart Kernel" })
+	vim.keymap.set("n", "<leader>rkdo<CR>", function() vim.cmd("VolcanoRestartAndDeleteAllOutput") end, { desc = "Restart Kernel and Clear Output" })
   end,
 })
 ```

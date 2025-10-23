@@ -2164,6 +2164,16 @@ class Molten:
     def command_restart(self, args, bang) -> None:
         self._restart_kernel()
 
+    @pynvim.command("VolcanoRestartAndDeleteAllOutput", nargs="*", sync=True, bang=True)
+    @nvimui  # type: ignore
+    def command_restart_delete_all_output(self, args, bang) -> None:
+        buf_obj = self.nvim.current.buffer
+        win = self.nvim.current.window
+        win.cursor = (1, 0)
+        cursor_row = self.nvim.current.window.cursor[0]
+        self._restart_kernel()
+        buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
+
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
     def command_delete(self, bang) -> None:
