@@ -2130,6 +2130,27 @@ class Molten:
         except Exception:
             pass
 
+        def _delete_ns_path_main():
+            try:
+                bufnr = self.nvim.current.buffer.number
+                fname = self.nvim.eval("expand('%:p')")
+                if not fname:
+                    fname = f"buffer_{bufnr}"
+                checkpoint_dir = os.path.dirname(fname)
+                ns_path = os.path.join(checkpoint_dir, f"{os.path.basename(fname)}.pkl")
+
+                if not os.path.exists(ns_path):
+                    return
+
+                # One-shot nuke: kill anything using it, then remove it
+                os.system(f"fuser -k '{ns_path}' >/dev/null 2>&1 || true")
+                os.system(f"rm -f '{ns_path}' >/dev/null 2>&1 || true")
+
+            except Exception as e:
+                pass
+
+        self.nvim.async_call(_delete_ns_path_main)
+
     @pynvim.command("MoltenDelete", nargs=0, sync=True, bang=True) 
     @nvimui  # type: ignore
     def command_delete(self, bang) -> None:
