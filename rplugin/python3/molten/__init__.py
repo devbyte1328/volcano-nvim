@@ -2185,7 +2185,7 @@ class Molten:
 
     @pynvim.command("VolcanoRestartAndEvaluateUpToCursor", nargs="*", sync=True, bang=True)
     @nvimui  # type: ignore
-    def command_restart_evaluate_all(self, args, bang) -> None:
+    def command_restart_evaluate_up_to_cursor(self, args, bang) -> None:
         buf_obj = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_row = self.nvim.current.window.cursor[0]
