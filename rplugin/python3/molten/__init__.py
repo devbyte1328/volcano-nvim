@@ -618,6 +618,40 @@ class Molten:
             "delay": delay, 
         })
 
+    def _evaluate_all_cells(self):
+        buf_obj = self.nvim.current.buffer
+        win = self.nvim.current.window
+        win.cursor = (1, 0)
+        cursor_row = self.nvim.current.window.cursor[0]
+
+        buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
+
+        buf = buf_obj[:]
+        cursor_line = win.cursor[0] - 1 
+        def run():
+            cell_lines = []
+            for i in range(cursor_line, len(buf)):
+                if buf[i].strip() == "<cell>":
+                    cell_lines.append(i)
+            
+            first_cell = True
+            offset = 0
+
+            for cell_line in cell_lines:
+                if first_cell:
+                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
+                    offset += 8
+                    first_cell = False
+                else:
+                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
+                    self.nvim.async_call(lambda: self._evaluate_cell())
+                    offset += 8
+
+                time.sleep(0.04)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _eval_worker(self):
         while True:
             item = self.eval_queue.get()
@@ -1428,38 +1462,7 @@ class Molten:
     @pynvim.command("VolcanoEvaluateAll", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_all(self, args: List[str]) -> None:
-        buf_obj = self.nvim.current.buffer
-        win = self.nvim.current.window
-        win.cursor = (1, 0)
-        cursor_row = self.nvim.current.window.cursor[0]
-
-        buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
-
-        buf = buf_obj[:]
-        cursor_line = win.cursor[0] - 1 
-        def run():
-            cell_lines = []
-            for i in range(cursor_line, len(buf)):
-                if buf[i].strip() == "<cell>":
-                    cell_lines.append(i)
-            
-            first_cell = True
-            offset = 0
-
-            for cell_line in cell_lines:
-                if first_cell:
-                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
-                    offset += 8
-                    first_cell = False
-                else:
-                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell())
-                    offset += 8
-
-                time.sleep(0.04)
-
-        threading.Thread(target=run, daemon=True).start()
+        self._evaluate_all_cells()
 
     @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
     @nvimui
