@@ -11,108 +11,167 @@ Create '~/.config/nvim/lua/plugins/volcano.lua':
 ```
 return {
     "devbyte1328/volcano-nvim",
-    version = "^1.0.0", -- use version <2.0.0 to avoid breaking changes
+    version = "^1.0.0",
     build = ":UpdateRemotePlugins",
     dependencies = {
         {
             "nvim-treesitter/nvim-treesitter",
             build = ":TSUpdate",
         },
-        "echasnovski/mini.nvim"
+        "echasnovski/mini.nvim",
     },
     opts = {},
     config = function()
-        -- Treesitter setup (moved here to make external treesitter.lua redundant)
+        local fn = vim.fn
+        local cmd = vim.cmd
+        local api = vim.api
+
+        -------------------------------------------------------------------------
+        -- Helper: check if a Python package is installed in a venv
+        -------------------------------------------------------------------------
+        local function has_python_packages(venv_path)
+            local python_bin = venv_path .. "/bin/python"
+            if fn.executable(python_bin) == 0 then
+                return false
+            end
+            local check_cmd = string.format(
+                "%s -c 'import importlib.util;import sys;sys.exit(0 if all(importlib.util.find_spec(p) for p in [\"pynvim\",\"jupyter_client\",\"jupyter\"]) else 1)'",
+                python_bin
+            )
+            local result = os.execute(check_cmd)
+            return result == true or result == 0
+        end
+
+        -------------------------------------------------------------------------
+        -- Helper: create a venv and install dependencies if needed
+        -------------------------------------------------------------------------
+        local function ensure_venv(venv_path)
+            if fn.isdirectory(venv_path) == 0 then
+                fn.mkdir(venv_path, "p")
+                os.execute(string.format("cd %s && python -m venv venv", fn.fnamemodify(venv_path, ":h")))
+            end
+            if not has_python_packages(venv_path) then
+                os.execute(string.format("%s/bin/python -m pip install -U pip pynvim jupyter_client jupyter", venv_path))
+            end
+        end
+
+        -------------------------------------------------------------------------
+        -- 1. Default venv check (~/.config/nvim/venv)
+        -------------------------------------------------------------------------
+        local default_venv = fn.expand("~/.config/nvim/venv")
+        ensure_venv(default_venv)
+        vim.g.python3_host_prog = default_venv .. "/bin/python"
+
+        -------------------------------------------------------------------------
+        -- Treesitter setup
+        -------------------------------------------------------------------------
         require("nvim-treesitter.configs").setup({
             ensure_installed = { "python", "markdown" },
             highlight = { enable = true },
             indent = { enable = true },
         })
-        -- Python provider: local venv
-        vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
+
+        -------------------------------------------------------------------------
         -- Ensure Jupyter runtime dir
-        local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
-        if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
-            vim.fn.mkdir(jupyter_runtime_dir, "p")
+        -------------------------------------------------------------------------
+        local jupyter_runtime_dir = fn.expand("~/.local/share/jupyter/runtime/")
+        if fn.isdirectory(jupyter_runtime_dir) == 0 then
+            fn.mkdir(jupyter_runtime_dir, "p")
         end
-        -- Molten config
         vim.g.molten_output_win_max_height = 12
-        -- Auto-run :VolcanoInit on .ipynb open
-        vim.api.nvim_create_autocmd("BufReadPost", {
+
+        -------------------------------------------------------------------------
+        -- 2. Per-notebook venv detection and switching
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
-            callback = function()
-                vim.cmd("VolcanoInit")
+            callback = function(args)
+                local file_dir = fn.fnamemodify(args.file, ":p:h")
+                local local_venv = file_dir .. "/venv"
+                if fn.isdirectory(local_venv) ~= 0 then
+                    if has_python_packages(local_venv) then
+                        vim.g.python3_host_prog = local_venv .. "/bin/python"
+                    else
+                        ensure_venv(local_venv)
+                        vim.g.python3_host_prog = local_venv .. "/bin/python"
+                    end
+                else
+                    -- fallback to default
+                    vim.g.python3_host_prog = default_venv .. "/bin/python"
+                end
+                cmd("VolcanoInit")
             end,
         })
-        -- Auto-run :SaveIPYNB after saving interpreted notebook files
-        vim.api.nvim_create_autocmd("BufWritePost", {
+
+        -------------------------------------------------------------------------
+        -- Auto-save .ipynb_interpreted -> .ipynb
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("BufWritePost", {
             pattern = "*.ipynb_interpreted",
             callback = function()
-                vim.cmd("SaveIPYNB")
+                cmd("SaveIPYNB")
             end,
         })
+
         -------------------------------------------------------------------------
-        -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
-        -- Anywhere else in your config. This block *forces* markdown for that
-        -- extension, even if a plugin or modeline tries to change it later.
+        -- Force .ipynb_interpreted as markdown (prevents type conflicts)
         -------------------------------------------------------------------------
-        local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
+        local grp = api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
         local function force_markdown(buf)
-            if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
-            local name = vim.api.nvim_buf_get_name(buf)
+            if not buf or not api.nvim_buf_is_valid(buf) then return end
+            local name = api.nvim_buf_get_name(buf)
             if name:match("%.ipynb_interpreted$") and vim.bo[buf].filetype ~= "markdown" then
-                -- setfiletype avoids re-triggering detection loops
-                vim.api.nvim_buf_call(buf, function()
-                    vim.cmd("setfiletype markdown")
+                api.nvim_buf_call(buf, function()
+                    cmd("setfiletype markdown")
                 end)
             end
         end
-        -- On open/create of those files
-        vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+
+        api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             group = grp,
             pattern = "*.ipynb_interpreted",
             callback = function(args)
                 force_markdown(args.buf)
-                -- Defer once more to beat late plugins/modelines
                 vim.defer_fn(function() force_markdown(args.buf) end, 0)
             end,
         })
-        -- If any plugin flips filetype later
-        vim.api.nvim_create_autocmd("FileType", {
+
+        api.nvim_create_autocmd("FileType", {
             group = grp,
             pattern = "*",
             callback = function(args)
                 force_markdown(args.buf)
             end,
         })
-        -- If the 'filetype' option changes for any reason
-        vim.api.nvim_create_autocmd("OptionSet", {
+
+        api.nvim_create_autocmd("OptionSet", {
             group = grp,
             pattern = "filetype",
             callback = function()
-                local buf = vim.api.nvim_get_current_buf()
+                local buf = api.nvim_get_current_buf()
                 force_markdown(buf)
             end,
         })
-        -- When entering the window (catches some late-setters)
-        vim.api.nvim_create_autocmd("BufEnter", {
+
+        api.nvim_create_autocmd("BufEnter", {
             group = grp,
             pattern = "*.ipynb_interpreted",
             callback = function(args)
                 force_markdown(args.buf)
             end,
         })
-        -- syntax color for interpreted file
-        -- ends with .ipynb_interpreted (still uses markdown ft)
-        vim.api.nvim_create_autocmd("FileType", {
-            group = vim.api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
+
+        -------------------------------------------------------------------------
+        -- Syntax highlight for interpreted notebooks
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("FileType", {
+            group = api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
             pattern = "markdown",
             callback = function(args)
-                local bufname = vim.api.nvim_buf_get_name(args.buf)
+                local bufname = api.nvim_buf_get_name(args.buf)
                 if not bufname:match("%.ipynb_interpreted$") then return end
                 vim.schedule(function()
-                    vim.cmd([[
-                        " Match tags
+                    cmd([[
                         syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
                         syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
                         syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
@@ -121,31 +180,27 @@ return {
                         syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
-                        " Include Python syntax in code cells
+
                         syntax include @Python syntax/python.vim
-                        " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
-                        " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
-                        " Status markers inside output
+
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Restarted /\v\[Kernel_Restarted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Interrupted /\v\[Kernel_Interrupted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
-                        " Tag highlighting (dark gray, italic)
+
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
-                        " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
-                        " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
@@ -158,19 +213,6 @@ return {
         })
     end,
 }
-```
-
-Create venv _somwhere?_(Figure out perm solution for venv) '~/.config/nvim/':
-```
-python -m venv venv
-```
-
-```
-source venv/bin/activate
-```
-
-```
-pip install pynvim jupyter_client jupyter 
 ```
 
 Add these lines to setup the keymaps '~/.config/nvim/init.lua':
@@ -238,102 +280,160 @@ return {
             "nvim-treesitter/nvim-treesitter",
             build = ":TSUpdate",
         },
-        "echasnovski/mini.nvim"
+        "echasnovski/mini.nvim",
     },
     opts = {},
     config = function()
-        -- Treesitter setup (moved here to make external treesitter.lua redundant)
+        local fn = vim.fn
+        local cmd = vim.cmd
+        local api = vim.api
+
+        -------------------------------------------------------------------------
+        -- Helper: check if a Python package is installed in a venv
+        -------------------------------------------------------------------------
+        local function has_python_packages(venv_path)
+            local python_bin = venv_path .. "/bin/python"
+            if fn.executable(python_bin) == 0 then
+                return false
+            end
+            local check_cmd = string.format(
+                "%s -c 'import importlib.util;import sys;sys.exit(0 if all(importlib.util.find_spec(p) for p in [\"pynvim\",\"jupyter_client\",\"jupyter\"]) else 1)'",
+                python_bin
+            )
+            local result = os.execute(check_cmd)
+            return result == true or result == 0
+        end
+
+        -------------------------------------------------------------------------
+        -- Helper: create a venv and install dependencies if needed
+        -------------------------------------------------------------------------
+        local function ensure_venv(venv_path)
+            if fn.isdirectory(venv_path) == 0 then
+                fn.mkdir(venv_path, "p")
+                os.execute(string.format("cd %s && python -m venv venv", fn.fnamemodify(venv_path, ":h")))
+            end
+            if not has_python_packages(venv_path) then
+                os.execute(string.format("%s/bin/python -m pip install -U pip pynvim jupyter_client jupyter", venv_path))
+            end
+        end
+
+        -------------------------------------------------------------------------
+        -- 1. Default venv check (~/.config/nvim/venv)
+        -------------------------------------------------------------------------
+        local default_venv = fn.expand("~/.config/nvim/venv")
+        ensure_venv(default_venv)
+        vim.g.python3_host_prog = default_venv .. "/bin/python"
+
+        -------------------------------------------------------------------------
+        -- Treesitter setup
+        -------------------------------------------------------------------------
         require("nvim-treesitter.configs").setup({
             ensure_installed = { "python", "markdown" },
             highlight = { enable = true },
             indent = { enable = true },
         })
 
-        -- Python provider: local venv
-        vim.g.python3_host_prog = vim.fn.expand("~/.config/nvim/venv/bin/python")
+        -------------------------------------------------------------------------
         -- Ensure Jupyter runtime dir
-        local jupyter_runtime_dir = vim.fn.expand("~/.local/share/jupyter/runtime/")
-        if vim.fn.isdirectory(jupyter_runtime_dir) == 0 then
-            vim.fn.mkdir(jupyter_runtime_dir, "p")
+        -------------------------------------------------------------------------
+        local jupyter_runtime_dir = fn.expand("~/.local/share/jupyter/runtime/")
+        if fn.isdirectory(jupyter_runtime_dir) == 0 then
+            fn.mkdir(jupyter_runtime_dir, "p")
         end
-        -- Molten config
         vim.g.molten_output_win_max_height = 12
-        -- Auto-run :VolcanoInit on .ipynb open
-        vim.api.nvim_create_autocmd("BufReadPost", {
+
+        -------------------------------------------------------------------------
+        -- 2. Per-notebook venv detection and switching
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("BufReadPost", {
             pattern = "*.ipynb",
-            callback = function()
-                vim.cmd("VolcanoInit")
+            callback = function(args)
+                local file_dir = fn.fnamemodify(args.file, ":p:h")
+                local local_venv = file_dir .. "/venv"
+                if fn.isdirectory(local_venv) ~= 0 then
+                    if has_python_packages(local_venv) then
+                        vim.g.python3_host_prog = local_venv .. "/bin/python"
+                    else
+                        ensure_venv(local_venv)
+                        vim.g.python3_host_prog = local_venv .. "/bin/python"
+                    end
+                else
+                    -- fallback to default
+                    vim.g.python3_host_prog = default_venv .. "/bin/python"
+                end
+                cmd("VolcanoInit")
             end,
         })
-        -- Auto-run :SaveIPYNB after saving interpreted notebook files
-        vim.api.nvim_create_autocmd("BufWritePost", {
+
+        -------------------------------------------------------------------------
+        -- Auto-save .ipynb_interpreted -> .ipynb
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("BufWritePost", {
             pattern = "*.ipynb_interpreted",
             callback = function()
-                vim.cmd("SaveIPYNB")
+                cmd("SaveIPYNB")
             end,
         })
+
         -------------------------------------------------------------------------
-        -- IMPORTANT: do NOT register a custom 'ipynb_interpreted' filetype
-        -- Anywhere else in your config. This block *forces* markdown for that
-        -- extension, even if a plugin or modeline tries to change it later.
+        -- Force .ipynb_interpreted as markdown (prevents type conflicts)
         -------------------------------------------------------------------------
-        local grp = vim.api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
+        local grp = api.nvim_create_augroup("ForceIpynbInterpretedAsMarkdown", { clear = true })
         local function force_markdown(buf)
-            if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
-            local name = vim.api.nvim_buf_get_name(buf)
+            if not buf or not api.nvim_buf_is_valid(buf) then return end
+            local name = api.nvim_buf_get_name(buf)
             if name:match("%.ipynb_interpreted$") and vim.bo[buf].filetype ~= "markdown" then
-                -- setfiletype avoids re-triggering detection loops
-                vim.api.nvim_buf_call(buf, function()
-                    vim.cmd("setfiletype markdown")
+                api.nvim_buf_call(buf, function()
+                    cmd("setfiletype markdown")
                 end)
             end
         end
-        -- On open/create of those files
-        vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+
+        api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             group = grp,
             pattern = "*.ipynb_interpreted",
             callback = function(args)
                 force_markdown(args.buf)
-                -- Defer once more to beat late plugins/modelines
                 vim.defer_fn(function() force_markdown(args.buf) end, 0)
             end,
         })
-        -- If any plugin flips filetype later
-        vim.api.nvim_create_autocmd("FileType", {
+
+        api.nvim_create_autocmd("FileType", {
             group = grp,
             pattern = "*",
             callback = function(args)
                 force_markdown(args.buf)
             end,
         })
-        -- If the 'filetype' option changes for any reason
-        vim.api.nvim_create_autocmd("OptionSet", {
+
+        api.nvim_create_autocmd("OptionSet", {
             group = grp,
             pattern = "filetype",
             callback = function()
-                local buf = vim.api.nvim_get_current_buf()
+                local buf = api.nvim_get_current_buf()
                 force_markdown(buf)
             end,
         })
-        -- When entering the window (catches some late-setters)
-        vim.api.nvim_create_autocmd("BufEnter", {
+
+        api.nvim_create_autocmd("BufEnter", {
             group = grp,
             pattern = "*.ipynb_interpreted",
             callback = function(args)
                 force_markdown(args.buf)
             end,
         })
-        -- syntax color for interpreted file
-        -- ends with .ipynb_interpreted (still uses markdown ft)
-        vim.api.nvim_create_autocmd("FileType", {
-            group = vim.api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
+
+        -------------------------------------------------------------------------
+        -- Syntax highlight for interpreted notebooks
+        -------------------------------------------------------------------------
+        api.nvim_create_autocmd("FileType", {
+            group = api.nvim_create_augroup("IpynbInterpretedSyntax", { clear = true }),
             pattern = "markdown",
             callback = function(args)
-                local bufname = vim.api.nvim_buf_get_name(args.buf)
+                local bufname = api.nvim_buf_get_name(args.buf)
                 if not bufname:match("%.ipynb_interpreted$") then return end
                 vim.schedule(function()
-                    vim.cmd([[
-                        " Match tags
+                    cmd([[
                         syntax match IPYNBCellTag /^<cell>$/ containedin=ALL
                         syntax match IPYNBCellTag /^<\/cell>$/ containedin=ALL
                         syntax match IPYNBOutputTag /^<output>$/ containedin=ALL
@@ -342,31 +442,27 @@ return {
                         syntax match IPYNBMarkdownTag /^<\/markdown>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<raw>$/ containedin=ALL
                         syntax match IPYNBRawTag /^<\/raw>$/ containedin=ALL
-                        " Include Python syntax in code cells
+
                         syntax include @Python syntax/python.vim
-                        " Define block regions
                         syntax region IPYNBPython start=/^<cell>$/ end=/^<\/cell>$/ contains=@Python keepend
                         syntax region IPYNBRawContent start=/^<raw>$/ end=/^<\/raw>$/ contains=IPYNBRawText keepend
                         syntax region IPYNBOutputContent start=/^<output>$/ end=/^<\/output>$/ contains=IPYNBOutputText keepend
-                        " Text content matches
                         syntax match IPYNBOutputText /.*/ contained
                         syntax match IPYNBRawText /.*/ contained
-                        " Status markers inside output
+
                         syntax match IPYNBEvalRunning /\v\[\*\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalDone /\v\[Done\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalError /\v\[Error\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Restarted /\v\[Kernel_Restarted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Interrupted /\v\[Kernel_Interrupted\]/ containedin=IPYNBOutputText
                         syntax match IPYNBEvalKernel_Stopped /\v\[Kernel_Stopped\]/ containedin=IPYNBOutputText
-                        " Tag highlighting (dark gray, italic)
+
                         highlight IPYNBCellTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBOutputTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBMarkdownTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
                         highlight IPYNBRawTag guifg=#5e5e5e ctermfg=240 gui=italic cterm=italic
-                        " Content highlighting
                         highlight IPYNBOutputText gui=NONE cterm=NONE
                         highlight IPYNBRawText guifg=#dddddd ctermfg=252
-                        " Output status highlighting
                         highlight IPYNBEvalRunning guifg=orange ctermfg=208
                         highlight IPYNBEvalDone guifg=green ctermfg=34
                         highlight IPYNBEvalError guifg=red ctermfg=196
@@ -379,19 +475,6 @@ return {
         })
     end,
 }
-```
-
-Create venv _somwhere?_(Figure out perm solution for venv) '~/.config/nvim/':
-```
-python -m venv venv
-```
-
-```
-source venv/bin/activate
-```
-
-```
-pip install pynvim jupyter_client jupyter 
 ```
 
 Add these lines to setup the keymaps '~/.config/nvim/init.lua':
