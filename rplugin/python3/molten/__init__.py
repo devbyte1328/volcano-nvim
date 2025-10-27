@@ -561,6 +561,50 @@ class Molten:
         expr_lines = buf[start_line + 1:end_line]
         expr = "\n".join(expr_lines).strip()
 
+        # Detect shell command syntax (e.g., "!pip install requests")
+        if expr.startswith("!"):
+            shell_cmd = expr[1:].strip()
+            if not shell_cmd:
+                return
+
+            # Insert placeholder output
+            placeholder = ["", "<output>", f"[Shell][*] running: {shell_cmd}", "</output>", ""]
+            buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+            self.nvim.command("undojoin")
+
+            def run_shell():
+                try:
+                    # Use same Python env for pip commands
+                    if shell_cmd.startswith("pip "):
+                        cmd = [sys.executable, "-m"] + shell_cmd.split()
+                        proc = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                        )
+                    else:
+                        proc = subprocess.Popen(
+                            shell_cmd,
+                            shell=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                        )
+                    output, _ = proc.communicate()
+                except Exception as e:
+                    output = f"Error executing shell command:\n{e}"
+
+                # Safely update buffer on main thread
+                def update_output():
+                    lines = ["", "<output>"] + output.splitlines() + ["</output>", ""]
+                    buf.api.set_lines(end_line + 1, end_line + 6, False, lines)
+
+                self.nvim.async_call(update_output)
+
+            threading.Thread(target=run_shell, daemon=True).start()
+            return
+
         if not expr:
             return  # Empty cell, skip evaluation
 
