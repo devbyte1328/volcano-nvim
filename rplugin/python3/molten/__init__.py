@@ -573,6 +573,7 @@ class Molten:
             self.nvim.command("undojoin")
 
             def run_shell():
+                import subprocess, sys
                 try:
                     # Use same Python env for pip commands
                     if shell_cmd.startswith("pip "):
@@ -597,7 +598,7 @@ class Molten:
 
                 # Safely update buffer on main thread
                 def update_output():
-                    lines = ["", "<output>"] + output.splitlines() + ["</output>", ""]
+                    lines = ["", "<output>"] + output.splitlines() + ["</output>"]
                     buf.api.set_lines(end_line + 1, end_line + 6, False, lines)
 
                 self.nvim.async_call(update_output)
