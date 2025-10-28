@@ -44,22 +44,49 @@ return {
 
         -------------------------------------------------------------------------
         -- Helper: create a venv and install dependencies if needed
+        -- Helper: copy site-packages from one venv to another
         -------------------------------------------------------------------------
-        local function ensure_venv(venv_path)
+
+        local function copy_site_packages(src_venv, dst_venv)
+            local src_site = src_venv .. "/lib/python*/site-packages"
+            local dst_site = dst_venv .. "/lib/python*/site-packages"
+            os.execute(string.format(
+                "bash -c 'src=(%s); dst=(%s); " ..
+                "if [ -d \"${src[0]}\" ] && [ -d \"${dst[0]}\" ]; then " ..
+                "cp -r -n \"${src[0]}\"/* \"${dst[0]}\"/; fi'",
+                src_site, dst_site
+            ))
+        end
+
+        -- Helper: create a venv and install dependencies if needed
+        local function ensure_venv(venv_path, default_venv)
             if fn.isdirectory(venv_path) == 0 then
                 fn.mkdir(venv_path, "p")
                 os.execute(string.format("cd %s && python -m venv venv", fn.fnamemodify(venv_path, ":h")))
             end
+
+            if has_python_packages(venv_path) then
+                return
+            end
+
+            -- If a default venv exists, copy its site-packages first
+            if default_venv and fn.isdirectory(default_venv) ~= 0 and has_python_packages(default_venv) then
+                copy_site_packages(default_venv, venv_path)
+            end
+
+            -- Only fall back to pip install if still missing deps
             if not has_python_packages(venv_path) then
                 os.execute(string.format("%s/bin/python -m pip install -U pip pynvim jupyter_client jupyter", venv_path))
             end
         end
 
+
         -------------------------------------------------------------------------
         -- 1. Default venv check (~/.config/nvim/venv)
         -------------------------------------------------------------------------
-        local default_venv = fn.expand("~/.config/nvim/venv")
-        ensure_venv(default_venv)
+        
+        local default_venv = fn.expand("~/.config/nvim/lua/local_plugins/volcano-nvim/venv")
+        ensure_venv(default_venv, nil)
         vim.g.python3_host_prog = default_venv .. "/bin/python"
 
         -------------------------------------------------------------------------
@@ -92,7 +119,7 @@ return {
                     if has_python_packages(local_venv) then
                         vim.g.python3_host_prog = local_venv .. "/bin/python"
                     else
-                        ensure_venv(local_venv)
+                        ensure_venv(local_venv, default_venv)
                         vim.g.python3_host_prog = local_venv .. "/bin/python"
                     end
                 else
@@ -306,22 +333,49 @@ return {
 
         -------------------------------------------------------------------------
         -- Helper: create a venv and install dependencies if needed
+        -- Helper: copy site-packages from one venv to another
         -------------------------------------------------------------------------
-        local function ensure_venv(venv_path)
+
+        local function copy_site_packages(src_venv, dst_venv)
+            local src_site = src_venv .. "/lib/python*/site-packages"
+            local dst_site = dst_venv .. "/lib/python*/site-packages"
+            os.execute(string.format(
+                "bash -c 'src=(%s); dst=(%s); " ..
+                "if [ -d \"${src[0]}\" ] && [ -d \"${dst[0]}\" ]; then " ..
+                "cp -r -n \"${src[0]}\"/* \"${dst[0]}\"/; fi'",
+                src_site, dst_site
+            ))
+        end
+
+        -- Helper: create a venv and install dependencies if needed
+        local function ensure_venv(venv_path, default_venv)
             if fn.isdirectory(venv_path) == 0 then
                 fn.mkdir(venv_path, "p")
                 os.execute(string.format("cd %s && python -m venv venv", fn.fnamemodify(venv_path, ":h")))
             end
+
+            if has_python_packages(venv_path) then
+                return
+            end
+
+            -- If a default venv exists, copy its site-packages first
+            if default_venv and fn.isdirectory(default_venv) ~= 0 and has_python_packages(default_venv) then
+                copy_site_packages(default_venv, venv_path)
+            end
+
+            -- Only fall back to pip install if still missing deps
             if not has_python_packages(venv_path) then
                 os.execute(string.format("%s/bin/python -m pip install -U pip pynvim jupyter_client jupyter", venv_path))
             end
         end
 
+
         -------------------------------------------------------------------------
         -- 1. Default venv check (~/.config/nvim/venv)
         -------------------------------------------------------------------------
-        local default_venv = fn.expand("~/.config/nvim/venv")
-        ensure_venv(default_venv)
+        
+        local default_venv = fn.expand("~/.config/nvim/lua/local_plugins/volcano-nvim/venv")
+        ensure_venv(default_venv, nil)
         vim.g.python3_host_prog = default_venv .. "/bin/python"
 
         -------------------------------------------------------------------------
@@ -354,7 +408,7 @@ return {
                     if has_python_packages(local_venv) then
                         vim.g.python3_host_prog = local_venv .. "/bin/python"
                     else
-                        ensure_venv(local_venv)
+                        ensure_venv(local_venv, default_venv)
                         vim.g.python3_host_prog = local_venv .. "/bin/python"
                     end
                 else
