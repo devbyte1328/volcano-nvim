@@ -567,6 +567,24 @@ class Molten:
             if not shell_cmd:
                 return
 
+            # --- Clear existing <output> block before inserting new one ---
+            output_start = None
+            output_end = None
+            for i in range(end_line + 1, len(buf)):
+                line = buf[i].strip()
+                if line == "<cell>":
+                    break
+                if line == "<output>":
+                    output_start = i
+                elif line == "</output>":
+                    output_end = i
+                    break
+            if output_start is not None and output_end is not None:
+                if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
+                    output_end += 1
+                buf.api.set_lines(output_start, output_end + 1, False, [])
+                self.nvim.command("undojoin")
+
             # Insert placeholder output
             placeholder = ["", "<output>", f"[Shell][*] running: {shell_cmd}", "</output>", ""]
             buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
