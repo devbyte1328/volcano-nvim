@@ -704,29 +704,6 @@ class Molten:
         return regions
 
 
-    def _remove_output_block_in_slice(self, buf: Buffer, from_line: int, to_line_exclusive: int) -> None:
-        """
-        Remove a single <output>...</output> block if present between [from_line, to_line_exclusive).
-        Only removes up to the next <cell>.
-        """
-        output_start = None
-        output_end = None
-        for i in range(from_line, min(to_line_exclusive, len(buf))):
-            s = buf[i].strip()
-            if s == "<cell>":
-                break
-            if s == "<output>":
-                output_start = i
-            elif s == "</output>":
-                output_end = i
-                break
-        if output_start is not None and output_end is not None:
-            # Also trim a trailing blank line if present
-            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
-                output_end += 1
-            buf.api.set_lines(output_start, output_end + 1, False, [])
-            self.nvim.command("undojoin")
-
     def _evaluate_all_cells(self, up_to_cursor=None):
         pass
 
