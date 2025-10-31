@@ -80,6 +80,9 @@ class Molten:
         self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
         self.eval_thread.start()
 
+        self.eval_gate = threading.Event()
+        self.eval_gate.set()
+
         self.global_namespaces: Dict[int, Dict[str, Any]] = {}
 
         self.current_eval_process: Optional[multiprocessing.Process] = None
@@ -681,50 +684,166 @@ class Molten:
             "delay": delay, 
         })
 
-    def _evaluate_all_cells(self, up_to_cursor = None):
-        buf_obj = self.nvim.current.buffer
-        win = self.nvim.current.window
-        win.cursor = (1, 0)
-        cursor_row = self.nvim.current.window.cursor[0]
+    def _find_cell_regions(self, buf_lines: List[str]) -> List[Tuple[int, int]]:
+        """
+        Return [(start_line, end_line)] for every <cell>...</cell> in the buffer.
+        Lines are 0-based and inclusive of both tags.
+        """
+        i = 0
+        regions = []
+        n = len(buf_lines)
+        while i < n:
+            if buf_lines[i].strip() == "<cell>":
+                start = i
+                i += 1
+                while i < n and buf_lines[i].strip() != "</cell>":
+                    i += 1
+                if i < n and buf_lines[i].strip() == "</cell>":
+                    regions.append((start, i))
+            i += 1
+        return regions
 
-        buf_obj[cursor_row:] = self._clean_output_blocks(buf_obj[cursor_row:])
 
-        buf = buf_obj[:]
-        cursor_line = win.cursor[0] - 1 
-        def run():
-            cell_lines = []
-            for i in range(cursor_line, len(buf)):
-                if buf[i].strip() == "<cell>":
-                    cell_lines.append(i)
-            
-            first_cell = True
-            offset = 0
+    def _remove_output_block_in_slice(self, buf: Buffer, from_line: int, to_line_exclusive: int) -> None:
+        """
+        Remove a single <output>...</output> block if present between [from_line, to_line_exclusive).
+        Only removes up to the next <cell>.
+        """
+        output_start = None
+        output_end = None
+        for i in range(from_line, min(to_line_exclusive, len(buf))):
+            s = buf[i].strip()
+            if s == "<cell>":
+                break
+            if s == "<output>":
+                output_start = i
+            elif s == "</output>":
+                output_end = i
+                break
+        if output_start is not None and output_end is not None:
+            # Also trim a trailing blank line if present
+            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
+                output_end += 1
+            buf.api.set_lines(output_start, output_end + 1, False, [])
+            self.nvim.command("undojoin")
 
-            for cell_line in cell_lines:
-                if first_cell:
-                    self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
-                    self.nvim.async_call(lambda: self._evaluate_cell(delay=True))
-                    offset += 4
-                    first_cell = False
-                else:
-                    if up_to_cursor != None and up_to_cursor < offset:
-                        break
-                    else:
-                        self.nvim.async_call(lambda l=offset: setattr(win, "cursor", (l + 1, 0)))
-                        self.nvim.async_call(lambda: self._evaluate_cell())
-                        offset += 8
+    def _evaluate_all_cells(self, up_to_cursor=None):
+        nvim = self.nvim
+        win = nvim.current.window
+        buf = nvim.current.buffer
 
-                time.sleep(0.04)
+        # 1) Snapshot + find cells
+        buf_lines = buf[:]
+        all_regions = self._find_cell_regions(buf_lines)
 
-        threading.Thread(target=run, daemon=True).start()
+        if not all_regions:
+            return
+
+        # Optional: limit to cells after cursor (behavior parity with old code)
+        if up_to_cursor is not None:
+            # keep for API compatibility; if you don't need it, you can remove
+            pass
+
+        # 2) Pause the worker so queued jobs don't start executing yet
+        self.eval_gate.clear()
+
+        queued_jobs = []  # (start_line, end_line, eval_id, expr)
+
+        # 3) Compute expressions & queue jobs WITHOUT touching the buffer
+        with self.eval_lock:
+            for (start_line, end_line) in all_regions:
+                # Extract expression (between tags)
+                expr_lines = buf_lines[start_line + 1:end_line]
+                expr = "\n".join(expr_lines).strip()
+
+                # Skip empty cells
+                if not expr:
+                    continue
+
+                eval_id = self.eval_counter
+                self.eval_counter += 1
+
+                # Stash metadata locally
+                queued_jobs.append((start_line, end_line, eval_id, expr))
+
+                # Enqueue the job (no buffer mutations needed)
+                # We preserve cursor + window for consistency, but don't move it now
+                job = {
+                    "bufnr": buf.number,
+                    "expr": expr,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "eval_id": eval_id,
+                    "cursor_pos": win.cursor,      # current cursor (unused by batch)
+                    "win_handle": win.handle,
+                    "delay": False,
+                }
+                self.eval_queue.put(job)
+
+        # 4) Insert placeholders bottom-up, cleaning any existing <output> for each cell
+        # Doing this from bottom to top avoids shifting indices for yet-to-be-updated regions.
+        for (start_line, end_line, eval_id, _expr) in reversed(queued_jobs):
+            # remove any blank lines immediately after </cell>
+            i = end_line + 1
+            delete_to = i
+            while delete_to < len(buf):
+                s = buf[delete_to].strip()
+                if s in ("<output>", "<cell>", "</output>", "</cell>") or s != "":
+                    break
+                delete_to += 1
+            if delete_to > i:
+                buf.api.set_lines(i, delete_to, False, [])
+                self.nvim.command("undojoin")
+
+            # ensure there is no lingering <output> block for this cell
+            self._remove_output_block_in_slice(buf, end_line + 1, len(buf))
+
+            # insert placeholder for this eval
+            placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
+            buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+            self.nvim.command("undojoin")
+
+        # 5) Let the worker run the queued jobs now that placeholders are in place
+        self.eval_gate.set()
 
     def _eval_worker(self):
+        """
+        Background evaluation worker.
+        - Pulls jobs from self.eval_queue continuously.
+        - Waits on self.eval_gate before *executing* jobs.
+        - Ensures queued jobs accumulate safely while gate is closed.
+        """
         while True:
-            item = self.eval_queue.get()
-            if item is None:
-                break  # Optional shutdown
-            self._evaluate_and_update(**item)
-            self.eval_queue.task_done()
+            try:
+                # Always get next job (even if gate is closed, so queue can fill)
+                item = self.eval_queue.get()
+
+                # Shutdown signal
+                if item is None:
+                    self.eval_queue.task_done()
+                    break
+
+                # Wait until evaluations are allowed to proceed
+                self.eval_gate.wait()
+
+                try:
+                    # Perform the actual evaluation (your existing logic)
+                    self._evaluate_and_update(**item)
+                except Exception as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    self.nvim.async_call(lambda: notify_error(f"[Molten eval_worker] {e}\n{tb}"))
+
+                self.eval_queue.task_done()
+
+            except Exception as outer_e:
+                import traceback
+                tb = traceback.format_exc()
+                self.nvim.async_call(
+                    lambda: notify_error(f"[Molten eval_worker outer loop] {outer_e}\n{tb}")
+                )
+                # continue looping even after unexpected errors
+                continue
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
@@ -1167,15 +1286,6 @@ class Molten:
                 pass
 
         self.nvim.async_call(_delete_ns_path_main)
-
-
-
-
-
-
-
-
-
 
     @pynvim.command("VolcanoInit", nargs="*", sync=True, complete="file") 
     @nvimui 
