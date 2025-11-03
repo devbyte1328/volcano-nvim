@@ -80,15 +80,14 @@ class Molten:
         self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
         self.eval_thread.start()
 
-        self.eval_gate = threading.Event()
-        self.eval_gate.set()
-
         self.global_namespaces: Dict[int, Dict[str, Any]] = {}
 
         self.current_eval_process: Optional[multiprocessing.Process] = None
         self.current_eval_pid: Optional[int] = None
         self.current_eval_bufnr: Optional[int] = None
         self.eval_interrupted = False
+
+        self.eval_wait = False
 
     def _initialize(self) -> None:
         assert not self.initialized
@@ -703,17 +702,23 @@ class Molten:
             i += 1
         return regions
 
+    def _evaluate_all_cells(self, delay=False):
+        buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
 
-    def _evaluate_all_cells(self, up_to_cursor=None):
-        pass
+        total_lines = buf[:]
+        offset = 0
+
+        for line in range(len(total_lines)):
+            if total_lines[line] == "<cell>":
+                win.cursor = (line + offset + 1, 0)
+                self._evaluate_cell(delay=True)
+                offset += 4
+
+        self.eval_wait = False
 
     def _eval_worker(self):
-        """
-        Background evaluation worker.
-        - Pulls jobs from self.eval_queue continuously.
-        - Waits on self.eval_gate before *executing* jobs.
-        - Ensures queued jobs accumulate safely while gate is closed.
-        """
         while True:
             try:
                 # Always get next job (even if gate is closed, so queue can fill)
@@ -724,16 +729,11 @@ class Molten:
                     self.eval_queue.task_done()
                     break
 
-                # Wait until evaluations are allowed to proceed
-                self.eval_gate.wait()
-
                 try:
                     # Perform the actual evaluation (your existing logic)
                     self._evaluate_and_update(**item)
                 except Exception as e:
-                    import traceback
-                    tb = traceback.format_exc()
-                    self.nvim.async_call(lambda: notify_error(f"[Molten eval_worker] {e}\n{tb}"))
+                    pass
 
                 self.eval_queue.task_done()
 
@@ -851,8 +851,10 @@ class Molten:
 
         lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
         update_output_block(lines_so_far.copy())
-        if delay:
-            time.sleep(0.3)
+
+        if delay == True:
+            while self.eval_wait == True:
+                time.sleep(1)
 
         output_queue = multiprocessing.Queue()
 
@@ -1634,7 +1636,7 @@ class Molten:
     @pynvim.command("VolcanoEvaluateAll", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_all(self, args: List[str]) -> None:
-        self._evaluate_all_cells()
+        self._evaluate_all_cells(delay=True)
 
     @pynvim.command("VolcanoEvaluateJump", nargs="*", sync=True)
     @nvimui
