@@ -738,20 +738,10 @@ class Molten:
                 self.eval_queue.task_done()
 
             except Exception as outer_e:
-                import traceback
-                tb = traceback.format_exc()
-                self.nvim.async_call(
-                    lambda: notify_error(f"[Molten eval_worker outer loop] {outer_e}\n{tb}")
-                )
-                # continue looping even after unexpected errors
                 continue
 
     def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
         """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
-
-        def notify_error_async(msg):
-            self.nvim.async_call(lambda: self.nvim.command(
-                f'echohl ErrorMsg | echom "[Eval Error] {msg}" | echohl None'))
 
         def update_output_block(lines):
             def _do_update():
@@ -786,8 +776,6 @@ class Molten:
                             else:
                                 in_cell = False
                                 code_index = 0
-                    if not found:
-                        notify_error_async("Cell not found in buffer for evaluation")
                         return
 
                     end_line_current = cell_end
@@ -811,7 +799,7 @@ class Molten:
                         buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
                         self.nvim.command("undojoin")
                 except Exception as e:
-                    notify_error_async(f"Stream update error: {e}")
+                    pass
             self.nvim.async_call(_do_update)
 
         # ---- Persistent global namespace setup ----
@@ -1102,7 +1090,7 @@ class Molten:
                 pickle.dump(ns, f)
             os.replace(tmp, ns_path)
         except Exception as e:
-            self.nvim.async_call(lambda: notify_error_async(f"Failed to save namespace: {e}"))
+            pass
 
 
     def _restart_kernel(self):
