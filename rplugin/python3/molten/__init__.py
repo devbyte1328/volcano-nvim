@@ -683,25 +683,6 @@ class Molten:
             "delay": delay, 
         })
 
-    def _find_cell_regions(self, buf_lines: List[str]) -> List[Tuple[int, int]]:
-        """
-        Return [(start_line, end_line)] for every <cell>...</cell> in the buffer.
-        Lines are 0-based and inclusive of both tags.
-        """
-        i = 0
-        regions = []
-        n = len(buf_lines)
-        while i < n:
-            if buf_lines[i].strip() == "<cell>":
-                start = i
-                i += 1
-                while i < n and buf_lines[i].strip() != "</cell>":
-                    i += 1
-                if i < n and buf_lines[i].strip() == "</cell>":
-                    regions.append((start, i))
-            i += 1
-        return regions
-
     def _evaluate_all_cells(self, delay=False):
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
