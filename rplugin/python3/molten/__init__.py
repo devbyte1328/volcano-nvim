@@ -757,6 +757,7 @@ class Molten:
                             else:
                                 in_cell = False
                                 code_index = 0
+                    if not found:
                         return
 
                     end_line_current = cell_end
