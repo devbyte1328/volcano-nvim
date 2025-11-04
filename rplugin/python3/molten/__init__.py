@@ -255,6 +255,26 @@ class Molten:
     def _move_cursor_to(self, win, line):
         win.cursor = (line + 1, 0)
 
+    def _delete_output_block_elements(self, script_in_parts, cursor_pos, delete="Entire", amount=0): # 'amount=0' means it will delete as much as it can
+        script = "\n".join(script_in_parts)
+        if delete == "Entire":
+            while "<output>" in script and "</output>" in script:
+                first_instance_start_output = script.find("<output>")
+                first_instance_end_output = script.find("</output>", first_instance_start_output)
+                if first_instance_end_output == -1:
+                    break
+                first_instance_end_output += len("</output>")
+                if first_instance_end_output < len(script) and script[first_instance_end_output] == "\n":
+                    first_instance_end_output += 1
+                script = script[:first_instance_start_output] + script[first_instance_end_output:]
+            while "\n\n\n" in script:
+                script = script.replace("\n\n\n", "\n\n")
+            return script.rstrip().splitlines()
+        elif delete == "Up":
+            pass
+        elif delete == "Down":
+            pass
+
     def _clean_output_blocks(self, lines: List[str]) -> List[str]:
         source = "\n".join(lines)
         open_tags = source.count("<output>")
@@ -539,40 +559,35 @@ class Molten:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
-        cur_line = self.nvim.funcs.line('.') - 1
-        total_lines = len(buf)
 
-        # Find cell block containing cursor
-        active_block = None
-        for i in range(total_lines):
-            if buf[i].strip() == "<cell>":
-                start = i
-                i += 1
-                while i < total_lines and buf[i].strip() != "</cell>":
-                    i += 1
-                if i < total_lines and buf[i].strip() == "</cell>":
-                    end = i
-                    if start <= cur_line <= end:
-                        active_block = (start, end)
+        # Check for cell block under cursor
+        start_cell_block_element = None
+        end_cell_block_element = None
+        for line in range(len(buf)):
+            if buf[line].strip() == "<cell>":
+                start_cell_block_element = line
+                line += 1
+                while line < len(buf) and buf[line].strip() != "</cell>":
+                    line += 1
+                if line < len(buf) and buf[line].strip() == "</cell>":
+                    end_cell_block_element = line
+                    if start_cell_block_element <= cursor_pos[0]-1 <= end_cell_block_element:
                         break
-
-        if not active_block:
+        if start_cell_block_element == None or end_cell_block_element == None:
             return
 
-        start_line, end_line = active_block
-        expr_lines = buf[start_line + 1:end_line]
-        expr = "\n".join(expr_lines).strip()
+        code = "\n".join(buf[start_cell_block_element + 1:end_cell_block_element]).strip()
 
-        # Detect shell command syntax (e.g., "!pip install requests")
-        if expr.startswith("!"):
-            shell_cmd = expr[1:].strip()
-            if not shell_cmd:
+        # Check for shell command in code, if first line starts with "!" then run it as shell command (e.g., "!pip install requests")
+        if code.startswith("!"):
+            command = code[1:].strip()
+            if not command:
                 return
 
             # --- Clear existing <output> block before inserting new one ---
             output_start = None
             output_end = None
-            for i in range(end_line + 1, len(buf)):
+            for i in range(end_cell_block_element + 1, len(buf)):
                 line = buf[i].strip()
                 if line == "<cell>":
                     break
@@ -588,16 +603,16 @@ class Molten:
                 self.nvim.command("undojoin")
 
             # Insert placeholder output
-            placeholder = ["", "<output>", f"[Shell][*] running: {shell_cmd}", "</output>", ""]
-            buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+            placeholder = ["", "<output>", f"[Shell][*] running: {command}", "</output>", ""]
+            buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, placeholder)
             self.nvim.command("undojoin")
 
             def run_shell():
                 import subprocess, sys
                 try:
                     # Use same Python env for pip commands
-                    if shell_cmd.startswith("pip "):
-                        cmd = [sys.executable, "-m"] + shell_cmd.split()
+                    if command.startswith("pip "):
+                        cmd = [sys.executable, "-m"] + command.split()
                         proc = subprocess.Popen(
                             cmd,
                             stdout=subprocess.PIPE,
@@ -606,7 +621,7 @@ class Molten:
                         )
                     else:
                         proc = subprocess.Popen(
-                            shell_cmd,
+                            command,
                             shell=True,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
@@ -619,26 +634,26 @@ class Molten:
                 # Safely update buffer on main thread
                 def update_output():
                     lines = ["", "<output>"] + output.splitlines() + ["</output>"]
-                    buf.api.set_lines(end_line + 1, end_line + 6, False, lines)
+                    buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 6, False, lines)
 
                 self.nvim.async_call(update_output)
 
             threading.Thread(target=run_shell, daemon=True).start()
             return
 
-        if not expr:
+        if not code:
             return  # Empty cell, skip evaluation
 
         with self.eval_lock:
             eval_id = self.eval_counter
             self.eval_counter += 1
 
-        # Skip evaluation if expr is empty or only whitespace
-        if not expr.strip():
+        # Skip evaluation if code is empty or only whitespace
+        if not code.strip():
             return
 
         # Remove any blank lines after </cell>
-        i = end_line + 1
+        i = end_cell_block_element + 1
         delete_to = i
         while delete_to < len(buf):
             line = buf[delete_to].strip()
@@ -651,7 +666,7 @@ class Molten:
         # Remove existing <output> block (only up to next <cell>)
         output_start = None
         output_end = None
-        for i in range(end_line + 1, len(buf)):
+        for i in range(end_cell_block_element + 1, len(buf)):
             line = buf[i].strip()
             if line == "<cell>":
                 break
@@ -668,15 +683,15 @@ class Molten:
 
         # Insert new output placeholder block
         placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
-        buf.api.set_lines(end_line + 1, end_line + 1, False, placeholder)
+        buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, placeholder)
         self.nvim.command("undojoin")
 
         # Queue up async evaluation
         self.eval_queue.put({
             "bufnr": buf.number,
-            "expr": expr,
-            "start_line": start_line,
-            "end_line": end_line,
+            "expr": code,
+            "start_line": start_cell_block_element,
+            "end_line": end_cell_block_element,
             "eval_id": eval_id,
             "cursor_pos": cursor_pos,
             "win_handle": win.handle,
@@ -1615,7 +1630,7 @@ class Molten:
 
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
-        cur_line = self.nvim.funcs.line('.') - 1
+        cursor_pos = win.cursor
         total_lines = len(buf)
 
         # Find current cell
@@ -1631,7 +1646,7 @@ class Molten:
                 if i < total_lines:
                     end = i
                     cell_blocks.append((start, end))
-                    if start <= cur_line <= end:
+                    if start <= cursor_pos[0]-1 <= end:
                         active_block = (start, end)
             i += 1
 
@@ -1759,33 +1774,11 @@ class Molten:
     @pynvim.command("VolcanoDeleteOutput", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_output(self, args: List[str]) -> None:
-        nvim = self.nvim
-        buf = nvim.current.buffer
-        cursor_line = nvim.current.window.cursor[0] - 1
-        lines = buf[:]
-
-        start_idx = None
-        for i in range(cursor_line, len(lines)):
-            if lines[i].strip() == "<output>":
-                start_idx = i
-                break
-        if start_idx is None:
-            return
-
-        end_idx = None
-        for j in range(start_idx + 1, len(lines)):
-            if lines[j].strip() == "</output>":
-                end_idx = j
-                break
-        if end_idx is None:
-            return
-
-        if end_idx + 1 < len(lines) and lines[end_idx + 1].strip() == "":
-            end_idx += 1
-
-        block_lines = lines[start_idx:end_idx + 1]
-        cleaned_block = self._clean_output_blocks(block_lines)
-        buf.api.set_lines(start_idx, end_idx + 1, False, cleaned_block)
+        buf = self.nvim.current.buffer
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
+        script = self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Entire")
+        buf.api.set_lines(0, -1, False, script)
 
     @pynvim.command("VolcanoDeleteAllOutputs", nargs="*", sync=True)
     @nvimui
