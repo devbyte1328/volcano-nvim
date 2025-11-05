@@ -258,17 +258,15 @@ class Molten:
     def _delete_output_block_elements(self, script_in_parts, cursor_pos, delete="Entire", amount=0): # 'amount=0' means it will delete as much as it can
         script = "\n".join(script_in_parts)
         if delete == "Entire":
-            while "<output>" in script and "</output>" in script:
+            while "<output>" in script and "</output>\n" in script:
                 first_instance_start_output = script.find("<output>")
-                first_instance_end_output = script.find("</output>", first_instance_start_output)
+                first_instance_end_output = script.find("</output>\n", first_instance_start_output)
                 if first_instance_end_output == -1:
                     break
-                first_instance_end_output += len("</output>")
+                first_instance_end_output += len("</output>\n")
                 if first_instance_end_output < len(script) and script[first_instance_end_output] == "\n":
                     first_instance_end_output += 1
                 script = script[:first_instance_start_output] + script[first_instance_end_output:]
-            while "\n\n\n" in script:
-                script = script.replace("\n\n\n", "\n\n")
             return script.rstrip().splitlines()
         elif delete == "Up":
             pass
