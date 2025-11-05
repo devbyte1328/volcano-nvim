@@ -255,6 +255,54 @@ class Molten:
     def _move_cursor_to(self, win, line):
         win.cursor = (line + 1, 0)
 
+    def _is_cursor_above_cell_block(self, buf, win, cursor_pos):
+        start_cell_block_element = False
+        end_cell_block_element = False
+        cursor_pos = cursor_pos[0] - 1
+
+        try:
+            up_cursor_pos = cursor_pos
+            first_line = True
+            while True:
+                if buf[up_cursor_pos].strip() == "":
+                    first_line = False
+                elif buf[up_cursor_pos].strip() == "<cell>":
+                    start_cell_block_element = True
+                    break
+                elif buf[up_cursor_pos].strip() == "</cell>":
+                    if first_line == True:
+                        first_line = False
+                        pass
+                    elif first_line == False:
+                        break
+                up_cursor_pos -= 1
+        except Exception:
+            pass
+
+        try:
+            down_cursor_pos = cursor_pos
+            while True:
+                if buf[down_cursor_pos].strip() == "":
+                    pass
+                if buf[down_cursor_pos].strip() == "</cell>":
+                    end_cell_block_element = True
+                    break
+                elif buf[down_cursor_pos].strip() == "<cell>":
+                    if start_cell_block_element == True:
+                        pass
+                    elif start_cell_block_element == False:
+                        break
+                down_cursor_pos += 1
+        except Exception:
+            pass
+
+        if start_cell_block_element == True and end_cell_block_element == True:
+            return True
+        elif start_cell_block_element != True or end_cell_block_element != True:
+            return False
+
+
+
     def _delete_output_block_elements(self, script_in_parts, cursor_pos, delete="Entire", amount=0): # 'amount=0' means it will delete as much as it can
         script = "\n".join(script_in_parts)
         if delete == "Entire":
@@ -1775,15 +1823,17 @@ class Molten:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
-        script = self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Entire")
-        buf.api.set_lines(0, -1, False, script)
+        result = self._is_cursor_above_cell_block(buf, win, cursor_pos)
+        notify_error(self.nvim, result)
 
     @pynvim.command("VolcanoDeleteAllOutputs", nargs="*", sync=True)
     @nvimui
     def command_volcano_delete_all_outputs(self, args: List[str]) -> None:
         buf = self.nvim.current.buffer
-        buf[:] = self._clean_output_blocks(buf[:])
-        buf.api.set_lines(len(buf), len(buf), False, [""])
+        win = self.nvim.current.window
+        cursor_pos = win.cursor
+        buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Entire"))
+
 
     @pynvim.command("VolcanoDeleteOutputsAbove", nargs="*", sync=True)
     @nvimui
