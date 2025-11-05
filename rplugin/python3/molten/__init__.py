@@ -255,6 +255,18 @@ class Molten:
     def _move_cursor_to(self, win, line):
         win.cursor = (line + 1, 0)
 
+    def _is_output_block_under_current_element_block(self, buf, win, cursor_pos):
+        cursor_pos = cursor_pos[0]
+        try:
+            while True:
+                if buf[cursor_pos].strip() in ("<markdown>", "<cell>", "<raw>"):
+                    return False
+                elif buf[cursor_pos].strip() == "<output>":
+                    return True
+                cursor_pos += 1
+        except Exception:
+            return False
+
     def _is_cursor_above_cell_block(self, buf, win, cursor_pos):
         start_cell_block_element = False
         end_cell_block_element = False
@@ -300,8 +312,6 @@ class Molten:
             return True
         elif start_cell_block_element != True or end_cell_block_element != True:
             return False
-
-
 
     def _delete_output_block_elements(self, script_in_parts, cursor_pos, delete="Entire", amount=0): # 'amount=0' means it will delete as much as it can
         script = "\n".join(script_in_parts)
@@ -1823,8 +1833,10 @@ class Molten:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
-        result = self._is_cursor_above_cell_block(buf, win, cursor_pos)
-        notify_error(self.nvim, result)
+        if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
+            notify_error(self.nvim, "Output Found!")
+        else:
+            notify_error(self.nvim, "No Output...")
 
     @pynvim.command("VolcanoDeleteAllOutputs", nargs="*", sync=True)
     @nvimui
