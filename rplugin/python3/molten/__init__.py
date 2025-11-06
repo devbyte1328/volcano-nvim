@@ -315,6 +315,7 @@ class Molten:
 
     def _delete_output_block_elements(self, script_in_parts, cursor_pos, delete="Entire", amount=0): # 'amount=0' means it will delete as much as it can
         script = "\n".join(script_in_parts)
+
         if delete == "Entire":
             while "<output>" in script and "</output>\n" in script:
                 first_instance_start_output = script.find("<output>")
@@ -326,12 +327,36 @@ class Molten:
                     first_instance_end_output += 1
                 script = script[:first_instance_start_output] + script[first_instance_end_output:]
             return script.rstrip().splitlines()
+
         elif delete == "Up":
-            pass
+            cursor_pos = cursor_pos[0] - 1
+            script = script_in_parts[:]
+            try:
+                while cursor_pos >= 0:
+                    # find the closing tag first, going upward
+                    while cursor_pos >= 0 and script[cursor_pos].strip() != "</output>":
+                        cursor_pos -= 1
+                    if cursor_pos < 0:
+                        break
+                    # then remove upward until the opening tag
+                    while cursor_pos >= 0:
+                        line = script[cursor_pos].strip()
+                        script.pop(cursor_pos)
+                        cursor_pos -= 1
+                        if line == "<output>":
+                            script.pop(cursor_pos)
+                            if amount != 0:
+                                amount -= 1
+                                if amount == 0:
+                                    return script
+                            break
+            except Exception:
+                pass
+            return script
+
         elif delete == "Down":
             cursor_pos = cursor_pos[0] - 1
             script = script_in_parts[:]
-
             try:
                 while cursor_pos < len(script):
                     while cursor_pos < len(script) and script[cursor_pos].strip() != "<output>":
@@ -350,7 +375,6 @@ class Molten:
                             break
             except Exception:
                 pass
-
             return script
 
     def _clean_output_blocks(self, lines: List[str]) -> List[str]:
