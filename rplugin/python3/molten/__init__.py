@@ -329,7 +329,29 @@ class Molten:
         elif delete == "Up":
             pass
         elif delete == "Down":
-            pass
+            cursor_pos = cursor_pos[0] - 1
+            script = script_in_parts[:]
+
+            try:
+                while cursor_pos < len(script):
+                    while cursor_pos < len(script) and script[cursor_pos].strip() != "<output>":
+                        cursor_pos += 1
+                    if cursor_pos >= len(script):
+                        break
+                    while cursor_pos < len(script):
+                        line = script[cursor_pos].strip()
+                        script.pop(cursor_pos)
+                        if line == "</output>":
+                            script.pop(cursor_pos)
+                            if amount != 0:
+                                amount -= 1
+                                if amount == 0:
+                                    return script
+                            break
+            except Exception:
+                pass
+
+            return script
 
     def _clean_output_blocks(self, lines: List[str]) -> List[str]:
         source = "\n".join(lines)
@@ -1833,10 +1855,9 @@ class Molten:
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
-        if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
-            notify_error(self.nvim, "Output Found!")
-        else:
-            notify_error(self.nvim, "No Output...")
+        if self._is_cursor_above_cell_block(buf, win, cursor_pos) == True:
+            if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
+                buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
 
     @pynvim.command("VolcanoDeleteAllOutputs", nargs="*", sync=True)
     @nvimui
