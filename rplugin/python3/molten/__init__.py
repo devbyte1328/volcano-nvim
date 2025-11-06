@@ -255,6 +255,15 @@ class Molten:
     def _move_cursor_to(self, win, line):
         win.cursor = (line + 1, 0)
 
+    def _restore_cursor_pos(self, old_buf, new_buf, win, old_cursor_pos):
+        if len(old_buf) < len(new_buf):
+            pass # might not need this if statement
+        elif len(old_buf) > len(new_buf):
+            win.cursor = (old_cursor_pos[0] - (len(old_buf) - len(new_buf)), 0)
+            self.nvim.command("normal! zz")
+        elif len(old_buf) == len(new_buf):
+            pass # might not need this if statement
+
     def _is_output_block_under_current_element_block(self, buf, win, cursor_pos):
         cursor_pos = cursor_pos[0]
         try:
@@ -1777,63 +1786,28 @@ class Molten:
             buf.api.set_lines(insert_line, insert_line, False, new_cell)
             win.cursor = (insert_line + 1, 0)  # Inside new cell
 
-
         self.nvim.async_call(_move_cursor_after_output)
 
     @pynvim.command("VolcanoEvaluateAbove", nargs="*", sync=True)
     @nvimui
     def command_volcano_evaluate_above(self, args: List[str]) -> None:
-        buf_obj = self.nvim.current.buffer
-        cursor_row = self.nvim.current.window.cursor[0]
-
-        if '<output>' in buf_obj[cursor_row - 1]:
-            if cursor_row < len(buf_obj):
-                cursor_row += 1
-                self.nvim.current.window.cursor = (cursor_row, 0)
-
-        new_buf = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
-
-        if new_buf == False:
-            while new_buf == False:
-                if cursor_row < len(buf_obj):
-                    cursor_row += 1
-                    self.nvim.current.window.cursor = (cursor_row, 0)
-                    new_buf = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
-                else:
-                    break
-
-        if new_buf != False:
-            buf_obj[0:cursor_row - 1] = self._clean_output_blocks(buf_obj[0:cursor_row - 1])
-
-        buf = buf_obj[:]
+        buf = self.nvim.current.buffer
         win = self.nvim.current.window
-        cursor_row = win.cursor[0]
-
-        cell_instance = 0
-        def run():
-            cell_instance = 0
-            first_cell = True
-            offset = 0
-
-            for line in range(cursor_row):
-                if buf[line].strip() == "<cell>":
-                    target_line = line + offset
-                    if first_cell:
-                        self.nvim.async_call(lambda line=target_line: (
-                            self._move_cursor_to(win, line),
-                            self._evaluate_cell(delay=True)
-                        ))
-                        first_cell = False
-                    else:
-                        self.nvim.async_call(lambda line=target_line: (
-                            self._move_cursor_to(win, line),
-                            self._evaluate_cell()
-                        ))
-                    offset += 4
-                    time.sleep(0.01)
-
-
-        threading.Thread(target=run, daemon=True).start()
+        cursor_pos = win.cursor
+        old_buf = buf[:]
+        buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Up", amount=0))
+        self._restore_cursor_pos(old_buf, buf, win, cursor_pos)
+        cursor_pos = win.cursor[0] - 1
+        try:
+            while True:
+                if buf[cursor_pos].strip() == "</cell>":
+                    self._move_cursor_to(win, cursor_pos)
+                    self._evaluate_cell()
+                cursor_pos -= 1
+                if cursor_pos < 0:
+                    break
+        except Exception:
+            pass
 
     @pynvim.command("VolcanoEvaluateBelow", nargs="*", sync=True)
     @nvimui
