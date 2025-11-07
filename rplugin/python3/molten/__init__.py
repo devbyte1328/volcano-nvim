@@ -738,12 +738,14 @@ class Molten:
             self.nvim.command("undojoin")
 
             def run(command=command):
+
                 try:
                     # If there's any 'pip ' in the command, rewrite it to use sys.executable -m pip
                     if "pip " in command and "python -m pip" not in command:
                         command = command.replace("pip ", f'"{sys.executable}" -m pip ')
                     output, _ = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).communicate()
-                except Exception:
+
+                except Exception as e:
                     output = f"Error executing shell command:\n{e}"
 
                 def update_output():
