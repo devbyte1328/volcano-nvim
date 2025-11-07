@@ -435,7 +435,6 @@ class Molten:
 
         cell_block_element = []
         if start_cell_block_element is not None and end_cell_block_element is not None:
-            # exclude <cell> and </cell> lines
             cell_block_element = buf[start_cell_block_element + 1:end_cell_block_element]
 
         return "\n".join(cell_block_element).strip() + "\n", start_cell_block_element, end_cell_block_element
