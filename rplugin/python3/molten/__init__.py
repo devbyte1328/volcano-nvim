@@ -36,6 +36,10 @@ from types import ModuleType
 
 import codeop
 
+import subprocess
+
+import sys
+
 @pynvim.plugin
 class Molten:
     """The plugin class. Provides an interface for interacting with the plugin via vim functions,
@@ -724,61 +728,31 @@ class Molten:
             if not command:
                 return
 
-            # --- Clear existing <output> block before inserting new one ---
-            output_start = None
-            output_end = None
-            for i in range(end_cell_block_element + 1, len(buf)):
-                line = buf[i].strip()
-                if line == "<cell>":
-                    break
-                if line == "<output>":
-                    output_start = i
-                elif line == "</output>":
-                    output_end = i
-                    break
-            if output_start is not None and output_end is not None:
-                if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
-                    output_end += 1
-                buf.api.set_lines(output_start, output_end + 1, False, [])
-                self.nvim.command("undojoin")
+            if self._is_cursor_above_cell_block(buf, win, cursor_pos) == True:
+                if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
+                    buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
 
             # Insert placeholder output
-            placeholder = ["", "<output>", f"[Shell][*] running: {command}", "</output>", ""]
+            placeholder = ["", "<output>", f"[{self.eval_counter}][*] 0.00 seconds...", "</output>", ""]
             buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, placeholder)
             self.nvim.command("undojoin")
 
-            def run_shell():
-                import subprocess, sys
+            def run(command=command):
                 try:
-                    # Use same Python env for pip commands
-                    if command.startswith("pip "):
-                        cmd = [sys.executable, "-m"] + command.split()
-                        proc = subprocess.Popen(
-                            cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                        )
-                    else:
-                        proc = subprocess.Popen(
-                            command,
-                            shell=True,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                        )
-                    output, _ = proc.communicate()
-                except Exception as e:
+                    # If there's any 'pip ' in the command, rewrite it to use sys.executable -m pip
+                    if "pip " in command and "python -m pip" not in command:
+                        command = command.replace("pip ", f'"{sys.executable}" -m pip ')
+                    output, _ = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).communicate()
+                except Exception:
                     output = f"Error executing shell command:\n{e}"
 
-                # Safely update buffer on main thread
                 def update_output():
                     lines = ["", "<output>"] + output.splitlines() + ["</output>"]
                     buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 6, False, lines)
 
                 self.nvim.async_call(update_output)
 
-            threading.Thread(target=run_shell, daemon=True).start()
+            threading.Thread(target=run_, daemon=True).start()
             return
 
         if not code:
