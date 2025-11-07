@@ -398,6 +398,47 @@ class Molten:
         elif open_tags != close_tags or (open_tags + close_tags) % 2 != 0:
             return False
 
+    def _return_cell_block_element(self, buf, win, cursor_pos):
+        cursor_pos = cursor_pos[0] - 1
+        start_cell_block_element = None
+        end_cell_block_element = None
+
+        try:
+            up_cursor_pos = cursor_pos
+            first_line = True
+            while True:
+                if buf[up_cursor_pos].strip() == "":
+                    first_line = False
+                elif buf[up_cursor_pos].strip() == "<cell>":
+                    start_cell_block_element = up_cursor_pos
+                    break
+                elif buf[up_cursor_pos].strip() == "</cell>":
+                    if first_line:
+                        first_line = False
+                    else:
+                        break
+                up_cursor_pos -= 1
+        except Exception:
+            pass
+
+        try:
+            down_cursor_pos = cursor_pos
+            while True:
+                if buf[down_cursor_pos].strip() == "</cell>":
+                    end_cell_block_element = down_cursor_pos
+                    break
+                elif buf[down_cursor_pos].strip() == "<cell>" and start_cell_block_element is None:
+                    break
+                down_cursor_pos += 1
+        except Exception:
+            pass
+
+        cell_block_element = []
+        if start_cell_block_element is not None and end_cell_block_element is not None:
+            cell_block_element = buf[start_cell_block_element:end_cell_block_element + 1]
+
+        return "\n".join(cell_block_element) + "\n"
+
     def _switch_cell_type(self, direction: str) -> None:
         buf = self.nvim.current.buffer
         cursor_row = self.nvim.current.window.cursor[0]
