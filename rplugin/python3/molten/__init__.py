@@ -435,9 +435,10 @@ class Molten:
 
         cell_block_element = []
         if start_cell_block_element is not None and end_cell_block_element is not None:
-            cell_block_element = buf[start_cell_block_element:end_cell_block_element + 1]
+            # exclude <cell> and </cell> lines
+            cell_block_element = buf[start_cell_block_element + 1:end_cell_block_element]
 
-        return "\n".join(cell_block_element) + "\n"
+        return "\n".join(cell_block_element).strip() + "\n", start_cell_block_element, end_cell_block_element
 
     def _switch_cell_type(self, direction: str) -> None:
         buf = self.nvim.current.buffer
@@ -713,22 +714,10 @@ class Molten:
         cursor_pos = win.cursor
 
         # Check for cell block under cursor
-        start_cell_block_element = None
-        end_cell_block_element = None
-        for line in range(len(buf)):
-            if buf[line].strip() == "<cell>":
-                start_cell_block_element = line
-                line += 1
-                while line < len(buf) and buf[line].strip() != "</cell>":
-                    line += 1
-                if line < len(buf) and buf[line].strip() == "</cell>":
-                    end_cell_block_element = line
-                    if start_cell_block_element <= cursor_pos[0]-1 <= end_cell_block_element:
-                        break
-        if start_cell_block_element == None or end_cell_block_element == None:
+        if self._is_cursor_above_cell_block(buf, win, cursor_pos) == False:
             return
 
-        code = "\n".join(buf[start_cell_block_element + 1:end_cell_block_element]).strip()
+        code, start_cell_block_element, end_cell_block_element = self._return_cell_block_element(buf, win, cursor_pos)
 
         # Check for shell command in code, if first line starts with "!" then run it as shell command (e.g., "!pip install requests")
         if code.startswith("!"):
