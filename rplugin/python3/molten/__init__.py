@@ -80,7 +80,7 @@ class Molten:
 
         self.eval_counter = 0
         self.eval_queue = queue.Queue()
-        self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
+        self.eval_thread = threading.Thread(target=self._evaluate, daemon=True)
         self.eval_thread.start()
 
         self.global_namespaces: Dict[int, Dict[str, Any]] = {}
@@ -789,381 +789,384 @@ class Molten:
 
         self.eval_wait = False
 
-    def _eval_worker(self):
+    def _evaluate(self):
         while True:
             try:
-                # Always get next job (even if gate is closed, so queue can fill)
-                item = self.eval_queue.get()
-
-                # Shutdown signal
-                if item is None:
+                task= self.eval_queue.get()
+                if task is None:
                     self.eval_queue.task_done()
                     break
 
-                try:
-                    # Perform the actual evaluation (your existing logic)
-                    self._evaluate_and_update(**item)
-                except Exception as e:
-                    pass
+                # Unpack explicitly for now:
+                bufnr = task["bufnr"]
+                expr = task["expr"]
+                start_line = task["start_line"]
+                end_line = task["end_line"]
+                eval_id = task["eval_id"]
+                cursor_pos = task["cursor_pos"]
+                win_handle = task["win_handle"]
+                delay = task.get("delay", False)
 
-                self.eval_queue.task_done()
+                """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
 
-            except Exception as outer_e:
-                continue
+                def update_output_block(lines):
+                    def _do_update():
+                        try:
+                            buf = self.nvim.buffers[bufnr]
+                            code_lines = expr.splitlines()
 
-    def _evaluate_and_update(self, bufnr, expr, start_line, end_line, eval_id, cursor_pos, win_handle, delay=False):
-        """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
-
-        def update_output_block(lines):
-            def _do_update():
-                try:
-                    buf = self.nvim.buffers[bufnr]
-                    code_lines = expr.splitlines()
-                    found = False
-                    cell_start = None
-                    cell_end = None
-                    in_cell = False
-                    code_index = 0
-                    for i in range(len(buf)):
-                        line = buf[i]
-                        stripped = line.strip()
-                        if stripped == "<cell>":
-                            in_cell = True
-                            cell_start = i
+                            found = False
+                            cell_start = None
+                            cell_end = None
+                            in_cell = False
                             code_index = 0
-                            continue
-                        if in_cell:
-                            if stripped == "</cell>":
-                                in_cell = False
-                                cell_end = i
-                                if code_index == len(code_lines):
-                                    found = True
-                                    break
-                                else:
+                            for i in range(len(buf)):
+                                line = buf[i]
+                                stripped = line.strip()
+                                if stripped == "<cell>":
+                                    in_cell = True
+                                    cell_start = i
                                     code_index = 0
                                     continue
-                            if code_index < len(code_lines) and line.rstrip() == code_lines[code_index].rstrip():
-                                code_index += 1
+                                if in_cell:
+                                    if stripped == "</cell>":
+                                        in_cell = False
+                                        cell_end = i
+                                        if code_index == len(code_lines):
+                                            found = True
+                                            break
+                                        else:
+                                            code_index = 0
+                                            continue
+                                    if code_index < len(code_lines) and line.rstrip() == code_lines[code_index].rstrip():
+                                        code_index += 1
+                                    else:
+                                        in_cell = False
+                                        code_index = 0
+                            if not found:
+                                return
+
+                            end_line_current = cell_end
+
+
+
+                            out_start, out_end = None, None
+                            found_output = False
+                            for j in range(end_line_current + 1, len(buf)):
+                                line = buf[j].strip()
+                                if not found_output and line == "<output>":
+                                    out_start = j
+                                    found_output = True
+                                elif found_output and line == "</output>":
+                                    out_end = j
+                                    break
+                            while lines and not lines[-1].strip():
+                                lines.pop()
+                            if out_start is not None and out_end is not None:
+                                buf.api.set_lines(out_start + 1, out_end, False, lines)
+                                self.nvim.command("undojoin")
                             else:
-                                in_cell = False
-                                code_index = 0
-                    if not found:
-                        return
+                                insert_lines = ["<output>"] + lines + ["</output>"]
+                                buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
+                                self.nvim.command("undojoin")
+                        except Exception as e:
+                            pass
+                    self.nvim.async_call(_do_update)
 
-                    end_line_current = cell_end
-                    out_start, out_end = None, None
-                    found_output = False
-                    for j in range(end_line_current + 1, len(buf)):
-                        line = buf[j].strip()
-                        if not found_output and line == "<output>":
-                            out_start = j
-                            found_output = True
-                        elif found_output and line == "</output>":
-                            out_end = j
-                            break
-                    while lines and not lines[-1].strip():
-                        lines.pop()
-                    if out_start is not None and out_end is not None:
-                        buf.api.set_lines(out_start + 1, out_end, False, lines)
-                        self.nvim.command("undojoin")
-                    else:
-                        insert_lines = ["<output>"] + lines + ["</output>"]
-                        buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
-                        self.nvim.command("undojoin")
-                except Exception as e:
-                    pass
-            self.nvim.async_call(_do_update)
+                # ---- Persistent global namespace setup ----
+                ns_result = []
+                ns_ready = threading.Event()
 
-        # ---- Persistent global namespace setup ----
-        ns_result = []
-        ns_ready = threading.Event()
-
-        def _compute_ns_path_on_main():
-            try:
-                fname = self.nvim.eval("expand('%:p')")
-                if not fname:
-                    fname = f"buffer_{bufnr}"
-                checkpoint_dir = os.path.dirname(fname)
-                os.makedirs(checkpoint_dir, exist_ok=True)
-                ns_path = os.path.join(checkpoint_dir, f"{os.path.basename(fname)}.pkl")
-                if os.path.exists(ns_path):
+                def _compute_ns_path_on_main():
                     try:
-                        with open(ns_path, "rb") as f:
-                            ns = pickle.load(f)
-                    except Exception:
-                        ns = {"variables": {}, "import_lines": []}
-                else:
-                    ns = {"variables": {}, "import_lines": []}
-                self.global_namespaces[bufnr] = ns
-                ns_result.append((ns_path, ns))
-            finally:
-                ns_ready.set()
-
-        self.nvim.async_call(_compute_ns_path_on_main)
-        ns_ready.wait()
-        ns_path, ns = ns_result[0]
-
-        # ---- Prepare state ----
-        self.current_eval_expr = expr
-        self.current_eval_start_line = start_line
-        self.current_eval_end_line = end_line
-        self.current_eval_eval_id = eval_id
-
-        lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
-        update_output_block(lines_so_far.copy())
-
-        if delay == True:
-            while self.eval_wait == True:
-                time.sleep(1)
-
-        output_queue = multiprocessing.Queue()
-
-        # ---- Worker process ----
-        def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
-
-            class StreamingStdout(io.TextIOBase):
-                def __init__(self, qq):
-                    self.q = qq
-                    self._buffer = ""
-                def write(self, text):
-                    if not text:
-                        return
-                    self._buffer += text
-                    while "\n" in self._buffer:
-                        line, self._buffer = self._buffer.split("\n", 1)
-                        self.q.put(("line", line))
-                def flush(self):
-                    if self._buffer:
-                        self.q.put(("line", self._buffer))
-                        self._buffer = ""
-
-            def picklable_vars(globs, baseline_keys):
-                out = {}
-                for k, v in globs.items():
-                    if k in baseline_keys or k.startswith("__"):
-                        continue
-                    if isinstance(v, ModuleType):
-                        continue
-                    try:
-                        pickle.dumps(v)
-                    except Exception:
-                        continue
-                    out[k] = v
-                return out
-
-            def extract_imports_from_src(src):
-                imps = []
-                for _line in src.splitlines():
-                    s = _line.strip()
-                    if s.startswith("import ") or s.startswith("from "):
-                        imps.append(s)
-                return imps
-
-            def atomic_pickle_write(path, payload):
-                tmp = path + ".tmp"
-                with open(tmp, "wb") as f:
-                    pickle.dump(payload, f)
-                os.replace(tmp, path)
-
-            error_happened = False
-            globs = {}
-            globs.update(pre_vars)
-
-            imports_live = list(import_lines_initial) if import_lines_initial else []
-            for imp in imports_live:
-                try:
-                    exec(imp, globs)
-                except Exception:
-                    pass
-
-            old_stdout, old_stderr = sys.stdout, sys.stderr
-            sys.stdout = sys.stderr = StreamingStdout(q)
-
-            compiler = codeop.CommandCompiler()
-            lines = code.splitlines()
-            buf_accum = []
-            baseline_keys = set(globs.keys())
-            start_idx = 0
-
-            try:
-                for i, line in enumerate(lines):
-                    buf_accum.append(line)
-                    src = "\n".join(buf_accum)
-                    codeobj = compiler(src, filename="<string>", symbol="exec")
-                    if codeobj is None:
-                        continue
-                    try:
-                        exec(codeobj, globs)
-                    except BaseException as e:
-                        error_happened = True
-                        tb = traceback.extract_tb(e.__traceback__)
-                        code_lines = code.splitlines()
-                        user_lineno = None
-                        for frame in tb:
-                            if frame.filename == "<string>":
-                                user_lineno = frame.lineno + start_idx
-                                break
-                        q.put(("line", "-" * 75))
-                        q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
-                        if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
-                            q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
-                            q.put(("line", f"----> {user_lineno} {code_lines[user_lineno - 1].strip()}"))
-                            q.put(("line", ""))
-                        q.put(("line", f"{type(e).__name__}: {e}"))
-                        break
-
-                    new_imps = extract_imports_from_src(src)
-                    for imp in new_imps:
-                        if imp not in imports_live:
-                            imports_live.append(imp)
-                    new_vars = picklable_vars(globs, baseline_keys)
-                    baseline_keys = set(globs.keys())
-                    q.put(("globals", (new_vars, new_imps)))
-
-                    try:
+                        fname = self.nvim.eval("expand('%:p')")
+                        if not fname:
+                            fname = f"buffer_{bufnr}"
+                        checkpoint_dir = os.path.dirname(fname)
+                        os.makedirs(checkpoint_dir, exist_ok=True)
+                        ns_path = os.path.join(checkpoint_dir, f"{os.path.basename(fname)}.pkl")
                         if os.path.exists(ns_path):
                             try:
                                 with open(ns_path, "rb") as f:
-                                    ns_disk = pickle.load(f)
+                                    ns = pickle.load(f)
                             except Exception:
-                                ns_disk = {"variables": {}, "import_lines": []}
+                                ns = {"variables": {}, "import_lines": []}
                         else:
-                            ns_disk = {"variables": {}, "import_lines": []}
-                        ns_disk["variables"].update(new_vars)
-                        for imp in imports_live:
-                            if imp not in ns_disk.get("import_lines", []):
-                                ns_disk.setdefault("import_lines", []).append(imp)
-                        atomic_pickle_write(ns_path, ns_disk)
-                    except Exception as _e:
-                        q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
+                            ns = {"variables": {}, "import_lines": []}
+                        self.global_namespaces[bufnr] = ns
+                        ns_result.append((ns_path, ns))
+                    finally:
+                        ns_ready.set()
 
+                self.nvim.async_call(_compute_ns_path_on_main)
+                ns_ready.wait()
+                ns_path, ns = ns_result[0]
+
+                # ---- Prepare state ----
+                self.current_eval_expr = expr
+                self.current_eval_start_line = start_line
+                self.current_eval_end_line = end_line
+                self.current_eval_eval_id = eval_id
+
+                lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
+                update_output_block(lines_so_far.copy())
+
+                if delay == True:
+                    while self.eval_wait == True:
+                        time.sleep(1)
+
+                output_queue = multiprocessing.Queue()
+
+                # ---- Worker process ----
+                def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
+
+                    class StreamingStdout(io.TextIOBase):
+                        def __init__(self, qq):
+                            self.q = qq
+                            self._buffer = ""
+                        def write(self, text):
+                            if not text:
+                                return
+                            self._buffer += text
+                            while "\n" in self._buffer:
+                                line, self._buffer = self._buffer.split("\n", 1)
+                                self.q.put(("line", line))
+                        def flush(self):
+                            if self._buffer:
+                                self.q.put(("line", self._buffer))
+                                self._buffer = ""
+
+                    def picklable_vars(globs, baseline_keys):
+                        out = {}
+                        for k, v in globs.items():
+                            if k in baseline_keys or k.startswith("__"):
+                                continue
+                            if isinstance(v, ModuleType):
+                                continue
+                            try:
+                                pickle.dumps(v)
+                            except Exception:
+                                continue
+                            out[k] = v
+                        return out
+
+                    def extract_imports_from_src(src):
+                        imps = []
+                        for _line in src.splitlines():
+                            s = _line.strip()
+                            if s.startswith("import ") or s.startswith("from "):
+                                imps.append(s)
+                        return imps
+
+                    def atomic_pickle_write(path, payload):
+                        tmp = path + ".tmp"
+                        with open(tmp, "wb") as f:
+                            pickle.dump(payload, f)
+                        os.replace(tmp, path)
+
+                    error_happened = False
+                    globs = {}
+                    globs.update(pre_vars)
+
+                    imports_live = list(import_lines_initial) if import_lines_initial else []
+                    for imp in imports_live:
+                        try:
+                            exec(imp, globs)
+                        except Exception:
+                            pass
+
+                    old_stdout, old_stderr = sys.stdout, sys.stderr
+                    sys.stdout = sys.stderr = StreamingStdout(q)
+
+                    compiler = codeop.CommandCompiler()
+                    lines = code.splitlines()
                     buf_accum = []
-                    start_idx = i + 1
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                q.put(("done", error_happened))
+                    baseline_keys = set(globs.keys())
+                    start_idx = 0
 
-        process = multiprocessing.Process(
-            target=run_eval,
-            args=(expr, output_queue, ns["variables"], ns.get("import_lines", []), ns_path),
-        )
-        process.start()
-        self.current_eval_process = process
-        self.current_eval_pid = process.pid
-        self.current_eval_bufnr = bufnr
+                    try:
+                        for i, line in enumerate(lines):
+                            buf_accum.append(line)
+                            src = "\n".join(buf_accum)
+                            codeobj = compiler(src, filename="<string>", symbol="exec")
+                            if codeobj is None:
+                                continue
+                            try:
+                                exec(codeobj, globs)
+                            except BaseException as e:
+                                error_happened = True
+                                tb = traceback.extract_tb(e.__traceback__)
+                                code_lines = code.splitlines()
+                                user_lineno = None
+                                for frame in tb:
+                                    if frame.filename == "<string>":
+                                        user_lineno = frame.lineno + start_idx
+                                        break
+                                q.put(("line", "-" * 75))
+                                q.put(("line", f"{type(e).__name__}{' ' * 33}Traceback (most recent call last)"))
+                                if user_lineno is not None and 1 <= user_lineno <= len(code_lines):
+                                    q.put(("line", f"Cell In[{eval_id}], line {user_lineno}"))
+                                    q.put(("line", f"----> {user_lineno} {code_lines[user_lineno - 1].strip()}"))
+                                    q.put(("line", ""))
+                                q.put(("line", f"{type(e).__name__}: {e}"))
+                                break
 
-        start_time = time.time()
-        last_update_time = start_time
-        update_interval = 0.3
-        saw_done = False
-        error_occurred = False
+                            new_imps = extract_imports_from_src(src)
+                            for imp in new_imps:
+                                if imp not in imports_live:
+                                    imports_live.append(imp)
+                            new_vars = picklable_vars(globs, baseline_keys)
+                            baseline_keys = set(globs.keys())
+                            q.put(("globals", (new_vars, new_imps)))
 
-        try:
-            while True:
-                got_item = False
+                            try:
+                                if os.path.exists(ns_path):
+                                    try:
+                                        with open(ns_path, "rb") as f:
+                                            ns_disk = pickle.load(f)
+                                    except Exception:
+                                        ns_disk = {"variables": {}, "import_lines": []}
+                                else:
+                                    ns_disk = {"variables": {}, "import_lines": []}
+                                ns_disk["variables"].update(new_vars)
+                                for imp in imports_live:
+                                    if imp not in ns_disk.get("import_lines", []):
+                                        ns_disk.setdefault("import_lines", []).append(imp)
+                                atomic_pickle_write(ns_path, ns_disk)
+                            except Exception as _e:
+                                q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
+
+                            buf_accum = []
+                            start_idx = i + 1
+                    finally:
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
+                        q.put(("done", error_happened))
+
+                process = multiprocessing.Process(
+                    target=run_eval,
+                    args=(expr, output_queue, ns["variables"], ns.get("import_lines", []), ns_path),
+                )
+                process.start()
+                self.current_eval_process = process
+                self.current_eval_pid = process.pid
+                self.current_eval_bufnr = bufnr
+
+                start_time = time.time()
+                last_update_time = start_time
+                update_interval = 0.3
+                saw_done = False
+                error_occurred = False
+
                 try:
-                    kind, payload = output_queue.get(timeout=0.05)
-                    got_item = True
-                except queue.Empty:
-                    pass
-                if got_item:
-                    if kind == "line":
-                        lines_so_far.append(str(payload))
-                    elif kind == "globals":
-                        new_vars, new_imports = payload
-                        ns["variables"].update(new_vars)
-                        for imp in new_imports:
-                            if imp not in ns.setdefault("import_lines", []):
-                                ns["import_lines"].append(imp)
-                    elif kind == "done":
-                        saw_done = True
-                        error_occurred = bool(payload)
+                    while True:
+                        got_item = False
+                        try:
+                            kind, payload = output_queue.get(timeout=0.05)
+                            got_item = True
+                        except queue.Empty:
+                            pass
+                        if got_item:
+                            if kind == "line":
+                                lines_so_far.append(str(payload))
+                            elif kind == "globals":
+                                new_vars, new_imports = payload
+                                ns["variables"].update(new_vars)
+                                for imp in new_imports:
+                                    if imp not in ns.setdefault("import_lines", []):
+                                        ns["import_lines"].append(imp)
+                            elif kind == "done":
+                                saw_done = True
+                                error_occurred = bool(payload)
 
-                elapsed = time.time() - start_time
-                lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
-                now = time.time()
-                if now - last_update_time > update_interval:
-                    update_output_block(lines_so_far.copy())
-                    last_update_time = now
-                if not process.is_alive() and saw_done:
-                    break
-                if not process.is_alive() and not got_item:
-                    break
-        finally:
-            if process.is_alive():
+                        elapsed = time.time() - start_time
+                        lines_so_far[0] = f"[{eval_id}][*] {elapsed:.2f} seconds..."
+                        now = time.time()
+                        if now - last_update_time > update_interval:
+                            update_output_block(lines_so_far.copy())
+                            last_update_time = now
+                        if not process.is_alive() and saw_done:
+                            break
+                        if not process.is_alive() and not got_item:
+                            break
+                finally:
+                    if process.is_alive():
+                        try:
+                            os.kill(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        process.join(timeout=1)
+                    self.current_eval_process = None
+                    self.current_eval_pid = None
+                    self.current_eval_bufnr = None
+
+                elapsed = max(0.0, time.time() - start_time)
+
+                # ---- Determine status (with traceback restoration) ----
+                if getattr(self, "eval_restarted", False):
+                    lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
+                    code_lines = expr.splitlines()
+                    idx = len(code_lines)
+                    while idx > 0 and not code_lines[idx - 1].strip():
+                        idx -= 1
+                    if idx >= 1:
+                        user_lineno = idx
+                        code_line = code_lines[user_lineno - 1].strip()
+                    else:
+                        user_lineno = 1
+                        code_line = ""
+                    lines_so_far += [
+                        "-" * 75,
+                        "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
+                        f"Cell In[{eval_id}], line {user_lineno}",
+                        f"----> {user_lineno} {code_line}",
+                        "",
+                        "KeyboardInterrupt",
+                    ]
+                    self.eval_restarted = False
+
+                elif getattr(self, "eval_interrupted", False):
+                    lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
+                    code_lines = expr.splitlines()
+                    idx = len(code_lines)
+                    while idx > 0 and not code_lines[idx - 1].strip():
+                        idx -= 1
+                    if idx >= 1:
+                        user_lineno = idx
+                        code_line = code_lines[user_lineno - 1].strip()
+                    else:
+                        user_lineno = 1
+                        code_line = ""
+                    lines_so_far += [
+                        "-" * 75,
+                        "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
+                        f"Cell In[{eval_id}], line {user_lineno}",
+                        f"----> {user_lineno} {code_line}",
+                        "",
+                        "KeyboardInterrupt",
+                    ]
+                    self.eval_interrupted = False
+
+                elif error_occurred:
+                    lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
+                else:
+                    lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
+
+                update_output_block(lines_so_far.copy())
+
+                # ---- Final persist ----
                 try:
-                    os.kill(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                    tmp = ns_path + ".tmp"
+                    with open(tmp, "wb") as f:
+                        pickle.dump(ns, f)
+                    os.replace(tmp, ns_path)
+                except Exception as e:
                     pass
-                process.join(timeout=1)
-            self.current_eval_process = None
-            self.current_eval_pid = None
-            self.current_eval_bufnr = None
 
-        elapsed = max(0.0, time.time() - start_time)
+            except Exception as e:
+                pass
 
-        # ---- Determine status (with traceback restoration) ----
-        if getattr(self, "eval_restarted", False):
-            lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
-            code_lines = expr.splitlines()
-            idx = len(code_lines)
-            while idx > 0 and not code_lines[idx - 1].strip():
-                idx -= 1
-            if idx >= 1:
-                user_lineno = idx
-                code_line = code_lines[user_lineno - 1].strip()
-            else:
-                user_lineno = 1
-                code_line = ""
-            lines_so_far += [
-                "-" * 75,
-                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {user_lineno}",
-                f"----> {user_lineno} {code_line}",
-                "",
-                "KeyboardInterrupt",
-            ]
-            self.eval_restarted = False
-
-        elif getattr(self, "eval_interrupted", False):
-            lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-            code_lines = expr.splitlines()
-            idx = len(code_lines)
-            while idx > 0 and not code_lines[idx - 1].strip():
-                idx -= 1
-            if idx >= 1:
-                user_lineno = idx
-                code_line = code_lines[user_lineno - 1].strip()
-            else:
-                user_lineno = 1
-                code_line = ""
-            lines_so_far += [
-                "-" * 75,
-                "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                f"Cell In[{eval_id}], line {user_lineno}",
-                f"----> {user_lineno} {code_line}",
-                "",
-                "KeyboardInterrupt",
-            ]
-            self.eval_interrupted = False
-
-        elif error_occurred:
-            lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
-        else:
-            lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
-
-        update_output_block(lines_so_far.copy())
-
-        # ---- Final persist ----
-        try:
-            tmp = ns_path + ".tmp"
-            with open(tmp, "wb") as f:
-                pickle.dump(ns, f)
-            os.replace(tmp, ns_path)
-        except Exception as e:
-            pass
-
+            self.eval_queue.task_done()
 
     def _restart_kernel(self):
         """Restart the entire Molten kernel environment and reset eval state."""
