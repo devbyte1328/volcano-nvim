@@ -78,8 +78,7 @@ class Molten:
         self.input_timer = None
         self.molten_kernels = {}
 
-        self.eval_counter = 1
-        self.eval_lock = threading.Lock()
+        self.eval_counter = 0
         self.eval_queue = queue.Queue()
         self.eval_thread = threading.Thread(target=self._eval_worker, daemon=True)
         self.eval_thread.start()
@@ -710,109 +709,69 @@ class Molten:
             move_cell(direction, start, end)
 
         self.nvim.async_call(run)
+    
+    def _insert_output_block(self, buf, end_cell_block_element):
+        output_block = ["", "<output>", f"[{self.eval_counter}][*] ...", "</output>"]
+        buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, output_block)
+        self.nvim.command("undojoin")
 
     def _evaluate_cell(self, delay: bool = False):
         buf = self.nvim.current.buffer
         win = self.nvim.current.window
         cursor_pos = win.cursor
 
-        # Check for cell block under cursor
-        if self._is_cursor_above_cell_block(buf, win, cursor_pos) == False:
-            return
+        if self._is_cursor_above_cell_block(buf, win, cursor_pos) == True:
 
-        code, start_cell_block_element, end_cell_block_element = self._return_cell_block_element(buf, win, cursor_pos)
+            code, start_cell_block_element, end_cell_block_element = self._return_cell_block_element(buf, win, cursor_pos)
 
-        # Check for shell command in code, if first line starts with "!" then run it as shell command (e.g., "!pip install requests")
-        if code.startswith("!"):
-            command = code[1:].strip()
-            if not command:
-                return
+            # Exit evaluation if code is empty or only whitespace or is empty shell command
+            if not code or not code.strip() or not code[1:].strip():
+                return 
 
-            if self._is_cursor_above_cell_block(buf, win, cursor_pos) == True:
+            self.eval_counter += 1
+
+            # Check for shell command in code, if first line starts with "!" then run it as shell command (e.g., "!pip install requests")
+            if code.startswith("!"):
+                command = code[1:].strip()
+
                 if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
                     buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
 
-            # Insert placeholder output
-            placeholder = ["", "<output>", f"[{self.eval_counter}][*] 0.00 seconds...", "</output>", ""]
-            buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, placeholder)
-            self.nvim.command("undojoin")
+                self._insert_output_block(buf, end_cell_block_element)
 
-            def run(command=command):
+                def run(command=command):
+                    try:
+                        # If there's any 'pip ' in the command, rewrite it to use sys.executable -m pip
+                        if "pip " in command and "python -m pip" not in command:
+                            command = command.replace("pip ", f'"{sys.executable}" -m pip ')
+                        output, _ = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).communicate()
+                    except Exception as e:
+                        output = f"Error executing shell command:\n{e}"
+                    def update_output():
+                        lines = ["", "<output>"] + output.splitlines() + ["</output>", ""]
+                        buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 6, False, lines)
+                    self.nvim.async_call(update_output)
+                threading.Thread(target=run, daemon=True).start()
+                return
 
-                try:
-                    # If there's any 'pip ' in the command, rewrite it to use sys.executable -m pip
-                    if "pip " in command and "python -m pip" not in command:
-                        command = command.replace("pip ", f'"{sys.executable}" -m pip ')
-                    output, _ = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).communicate()
+            # If it's not shell command then it's python code
+            else:
+                if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
+                    buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
 
-                except Exception as e:
-                    output = f"Error executing shell command:\n{e}"
+                self._insert_output_block(buf, end_cell_block_element)
 
-                def update_output():
-                    lines = ["", "<output>"] + output.splitlines() + ["</output>"]
-                    buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 6, False, lines)
-
-                self.nvim.async_call(update_output)
-
-            threading.Thread(target=run_, daemon=True).start()
-            return
-
-        if not code:
-            return  # Empty cell, skip evaluation
-
-        with self.eval_lock:
-            eval_id = self.eval_counter
-            self.eval_counter += 1
-
-        # Skip evaluation if code is empty or only whitespace
-        if not code.strip():
-            return
-
-        # Remove any blank lines after </cell>
-        i = end_cell_block_element + 1
-        delete_to = i
-        while delete_to < len(buf):
-            line = buf[delete_to].strip()
-            if line in ("<output>", "<cell>", "</output>", "</cell>") or line != "":
-                break
-            delete_to += 1
-        if delete_to > i:
-            buf.api.set_lines(i, delete_to, False, [])
-
-        # Remove existing <output> block (only up to next <cell>)
-        output_start = None
-        output_end = None
-        for i in range(end_cell_block_element + 1, len(buf)):
-            line = buf[i].strip()
-            if line == "<cell>":
-                break
-            if line == "<output>":
-                output_start = i
-            elif line == "</output>":
-                output_end = i
-                break
-        if output_start is not None and output_end is not None:
-            if output_end + 1 < len(buf) and buf[output_end + 1].strip() == "":
-                output_end += 1
-            buf.api.set_lines(output_start, output_end + 1, False, [])
-            self.nvim.command("undojoin")
-
-        # Insert new output placeholder block
-        placeholder = ["", "<output>", f"[{eval_id}][*] queue...", "</output>", ""]
-        buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, placeholder)
-        self.nvim.command("undojoin")
-
-        # Queue up async evaluation
-        self.eval_queue.put({
-            "bufnr": buf.number,
-            "expr": code,
-            "start_line": start_cell_block_element,
-            "end_line": end_cell_block_element,
-            "eval_id": eval_id,
-            "cursor_pos": cursor_pos,
-            "win_handle": win.handle,
-            "delay": delay, 
-        })
+                # Queue up async evaluation
+                self.eval_queue.put({
+                    "bufnr": buf.number,
+                    "expr": code,
+                    "start_line": start_cell_block_element,
+                    "end_line": end_cell_block_element,
+                    "eval_id": self.eval_counter,
+                    "cursor_pos": cursor_pos,
+                    "win_handle": win.handle,
+                    "delay": delay, 
+                })
 
     def _evaluate_all_cells(self, delay=False):
         buf = self.nvim.current.buffer
