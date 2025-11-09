@@ -82,8 +82,6 @@ class Molten:
         self.eval_thread = threading.Thread(target=self._evaluate, daemon=True)
         self.eval_thread.start()
 
-        self.global_namespaces: Dict[int, Dict[str, Any]] = {}
-
         self.current_eval_process: Optional[multiprocessing.Process] = None
         self.current_eval_pid: Optional[int] = None
         self.current_eval_bufnr: Optional[int] = None
@@ -825,35 +823,25 @@ class Molten:
 
                 ns_result = []
                 ns_ready = threading.Event()
-
-                def _load_namespace():
+                def _load_namespaces():
                     try:
-                        load_namespace = f"{self.nvim.eval('expand(\"%:p\")')}.json"
-
-                        if os.path.exists(load_namespace):
+                        namespaces_path = f"{self.nvim.eval('expand(\"%:p\")')}.json"
+                        if os.path.exists(namespaces_path):
                             try:
-                                with open(load_namespace, "r", encoding="utf-8") as f:
+                                with open(namespaces_path, "r", encoding="utf-8") as f:
                                     ns = json.load(f)
                             except Exception:
                                 ns = {"variables": {}, "imports": []}
                         else:
                             ns = {"variables": {}, "imports": []}
-
-                        self.global_namespaces[bufnr] = ns
-
-                        ns_result.append((load_namespace, ns))
+                        ns_result.append((namespaces_path, ns))
                     finally:
                         ns_ready.set()
-
-                self.nvim.async_call(_load_namespace)
-
+                self.nvim.async_call(_load_namespaces)
                 ns_ready.wait()
+                load_namespaces, ns = ns_result[0]
 
-                load_namespace, ns = ns_result[0]
-
-                # ---------- evaluation ----------
                 lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
-                update_output_block(lines_so_far.copy())
 
                 if delay:
                     while self.eval_wait:
@@ -861,9 +849,7 @@ class Molten:
 
                 output_queue = multiprocessing.Queue()
 
-                def run_eval(code, q, pre_vars, imports_initial, load_namespace):
-                    import io, sys, traceback, pickle, os, signal, codeop
-                    from types import ModuleType
+                def run_eval(code, q, pre_vars, imports_initial, load_namespaces):
 
                     class StreamingStdout(io.TextIOBase):
                         def __init__(self, qq):
@@ -965,9 +951,9 @@ class Molten:
                             q.put(("globals", (new_vars, new_imps)))
 
                             try:
-                                if os.path.exists(load_namespace):
+                                if os.path.exists(load_namespaces):
                                     try:
-                                        with open(load_namespace, "r", encoding="utf-8") as f:
+                                        with open(load_namespaces, "r", encoding="utf-8") as f:
                                             ns_disk = json.load(f)
                                     except Exception:
                                         ns_disk = {"variables": {}, "imports": []}
@@ -979,7 +965,7 @@ class Molten:
                                     if imp not in ns_disk.get("imports", []):
                                         ns_disk.setdefault("imports", []).append(imp)
 
-                                atomic_json_write(load_namespace, ns_disk)
+                                atomic_json_write(load_namespaces, ns_disk)
 
                             except Exception as _e:
                                 q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
@@ -993,7 +979,7 @@ class Molten:
 
                 process = multiprocessing.Process(
                     target=run_eval,
-                    args=(expr, output_queue, ns["variables"], ns.get("imports", []), load_namespace),
+                    args=(expr, output_queue, ns["variables"], ns.get("imports", []), load_namespaces),
                 )
                 process.start()
 
@@ -1014,6 +1000,8 @@ class Molten:
                         if got_item:
                             if kind == "line":
                                 lines_so_far.append(str(payload))
+
+
                             elif kind == "globals":
                                 new_vars, new_imports = payload
                                 ns["variables"].update(new_vars)
@@ -1047,10 +1035,10 @@ class Molten:
                 update_output_block(lines_so_far.copy())
 
                 try:
-                    tmp = load_namespace + ".tmp"
+                    tmp = load_namespaces + ".tmp"
                     with open(tmp, "w", encoding="utf-8") as f:
                         json.dump(ns, f, indent=2, ensure_ascii=False)
-                    os.replace(tmp, load_namespace)
+                    os.replace(tmp, load_namespaces)
                 except Exception:
                     pass
 
@@ -1089,9 +1077,6 @@ class Molten:
                     self.eval_queue.get_nowait()
                 except queue.Empty:
                     break
-
-        # reset persistent namespaces
-        self.global_namespaces.clear()
 
         # restart all existing Molten kernels
         restarted = []
