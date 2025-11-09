@@ -756,10 +756,14 @@ class Molten:
 
             # If it's not shell command then it's python code
             else:
+
+                ### This code block is pointless, disabling for now...
+                '''
                 if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
                     buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
-
                 self._insert_output_block(buf, end_cell_block_element)
+                '''
+                ###
 
                 # Queue up async evaluation
                 self.eval_queue.put({
@@ -817,7 +821,7 @@ class Molten:
                                 buf.api.set_lines(out_start + 1, out_end, False, lines)
                                 self.nvim.command("undojoin")
                             else:
-                                insert_lines = ["<output>"] + lines + ["</output>"]
+                                insert_lines = ["", "<output>"] + lines + ["</output>"]
                                 buf.api.set_lines(end_line + 1, end_line + 1, False, insert_lines)
                                 self.nvim.command("undojoin")
                         except Exception:
