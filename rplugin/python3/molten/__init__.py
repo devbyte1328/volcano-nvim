@@ -765,8 +765,8 @@ class Molten:
                 self.eval_queue.put({
                     "bufnr": buf.number,
                     "expr": code,
-                    "start_line": start_cell_block_element,
-                    "end_line": end_cell_block_element,
+                    "start_cell_block_element": start_cell_block_element,
+                    "end_cell_block_element": end_cell_block_element,
                     "eval_id": self.eval_counter,
                     "cursor_pos": cursor_pos,
                     "win_handle": win.handle,
@@ -792,7 +792,7 @@ class Molten:
     def _evaluate(self):
         while True:
             try:
-                task= self.eval_queue.get()
+                task = self.eval_queue.get()
                 if task is None:
                     self.eval_queue.task_done()
                     break
@@ -800,8 +800,8 @@ class Molten:
                 # Unpack explicitly for now:
                 bufnr = task["bufnr"]
                 expr = task["expr"]
-                start_line = task["start_line"]
-                end_line = task["end_line"]
+                start_cell_block_element = task["start_cell_block_element"]
+                end_cell_block_element = task["end_cell_block_element"]
                 eval_id = task["eval_id"]
                 cursor_pos = task["cursor_pos"]
                 win_handle = task["win_handle"]
@@ -810,49 +810,15 @@ class Molten:
                 """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
 
                 def update_output_block(lines):
+
                     def _do_update():
                         try:
                             buf = self.nvim.buffers[bufnr]
                             code_lines = expr.splitlines()
 
-                            found = False
-                            cell_start = None
-                            cell_end = None
-                            in_cell = False
-                            code_index = 0
-                            for i in range(len(buf)):
-                                line = buf[i]
-                                stripped = line.strip()
-                                if stripped == "<cell>":
-                                    in_cell = True
-                                    cell_start = i
-                                    code_index = 0
-                                    continue
-                                if in_cell:
-                                    if stripped == "</cell>":
-                                        in_cell = False
-                                        cell_end = i
-                                        if code_index == len(code_lines):
-                                            found = True
-                                            break
-                                        else:
-                                            code_index = 0
-                                            continue
-                                    if code_index < len(code_lines) and line.rstrip() == code_lines[code_index].rstrip():
-                                        code_index += 1
-                                    else:
-                                        in_cell = False
-                                        code_index = 0
-                            if not found:
-                                return
-
-                            end_line_current = cell_end
-
-
-
                             out_start, out_end = None, None
                             found_output = False
-                            for j in range(end_line_current + 1, len(buf)):
+                            for j in range(end_cell_block_element + 1, len(buf)):
                                 line = buf[j].strip()
                                 if not found_output and line == "<output>":
                                     out_start = j
@@ -867,7 +833,7 @@ class Molten:
                                 self.nvim.command("undojoin")
                             else:
                                 insert_lines = ["<output>"] + lines + ["</output>"]
-                                buf.api.set_lines(end_line_current + 1, end_line_current + 1, False, insert_lines)
+                                buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, insert_lines)
                                 self.nvim.command("undojoin")
                         except Exception as e:
                             pass
@@ -904,8 +870,8 @@ class Molten:
 
                 # ---- Prepare state ----
                 self.current_eval_expr = expr
-                self.current_eval_start_line = start_line
-                self.current_eval_end_line = end_line
+                self.current_eval_start_line = start_cell_block_element
+                self.current_eval_end_line = end_cell_block_element
                 self.current_eval_eval_id = eval_id
 
                 lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
