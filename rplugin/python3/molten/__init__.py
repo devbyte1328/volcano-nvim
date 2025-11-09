@@ -765,8 +765,8 @@ class Molten:
                 self.eval_queue.put({
                     "bufnr": buf.number,
                     "expr": code,
-                    "start_cell_block_element": start_cell_block_element,
-                    "end_cell_block_element": end_cell_block_element,
+                    "start_line": start_cell_block_element,
+                    "end_line": end_cell_block_element,
                     "eval_id": self.eval_counter,
                     "cursor_pos": cursor_pos,
                     "win_handle": win.handle,
@@ -774,43 +774,28 @@ class Molten:
                 })
 
     def _evaluate_all_cells(self, delay=False):
-        buf = self.nvim.current.buffer
-        win = self.nvim.current.window
-        cursor_pos = win.cursor
-
-        total_lines = buf[:]
-        offset = 0
-
-        for line in range(len(total_lines)):
-            if total_lines[line] == "<cell>":
-                win.cursor = (line + offset + 1, 0)
-                self._evaluate_cell(delay=True)
-                offset += 4
-
-        self.eval_wait = False
+        pass
+        # Broken for now
 
     def _evaluate(self):
         while True:
             try:
-                task = self.eval_queue.get()
-                if task is None:
+                item = self.eval_queue.get()
+
+                if item is None:
                     self.eval_queue.task_done()
                     break
 
-                # Unpack explicitly for now:
-                bufnr = task["bufnr"]
-                expr = task["expr"]
-                start_cell_block_element = task["start_cell_block_element"]
-                end_cell_block_element = task["end_cell_block_element"]
-                eval_id = task["eval_id"]
-                cursor_pos = task["cursor_pos"]
-                win_handle = task["win_handle"]
-                delay = task.get("delay", False)
-
-                """Evaluate a <cell> block, stream its output, and persist its namespace per-chunk."""
+                bufnr = item["bufnr"]
+                expr = item["expr"]
+                start_line = item["start_line"]
+                end_line = item["end_line"]
+                eval_id = item["eval_id"]
+                cursor_pos = item["cursor_pos"]
+                win_handle = item["win_handle"]
+                delay = item.get("delay", False)
 
                 def update_output_block(lines):
-
                     def _do_update():
                         try:
                             buf = self.nvim.buffers[bufnr]
@@ -818,7 +803,7 @@ class Molten:
 
                             out_start, out_end = None, None
                             found_output = False
-                            for j in range(end_cell_block_element + 1, len(buf)):
+                            for j in range(end_line + 1, len(buf)):
                                 line = buf[j].strip()
                                 if not found_output and line == "<output>":
                                     out_start = j
@@ -833,13 +818,13 @@ class Molten:
                                 self.nvim.command("undojoin")
                             else:
                                 insert_lines = ["<output>"] + lines + ["</output>"]
-                                buf.api.set_lines(end_cell_block_element + 1, end_cell_block_element + 1, False, insert_lines)
+                                buf.api.set_lines(end_line + 1, end_line + 1, False, insert_lines)
                                 self.nvim.command("undojoin")
-                        except Exception as e:
+                        except Exception:
                             pass
                     self.nvim.async_call(_do_update)
 
-                # ---- Persistent global namespace setup ----
+                # ---------- namespace setup ----------
                 ns_result = []
                 ns_ready = threading.Event()
 
@@ -868,23 +853,19 @@ class Molten:
                 ns_ready.wait()
                 ns_path, ns = ns_result[0]
 
-                # ---- Prepare state ----
-                self.current_eval_expr = expr
-                self.current_eval_start_line = start_cell_block_element
-                self.current_eval_end_line = end_cell_block_element
-                self.current_eval_eval_id = eval_id
-
+                # ---------- evaluation ----------
                 lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
                 update_output_block(lines_so_far.copy())
 
-                if delay == True:
-                    while self.eval_wait == True:
+                if delay:
+                    while self.eval_wait:
                         time.sleep(1)
 
                 output_queue = multiprocessing.Queue()
 
-                # ---- Worker process ----
                 def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
+                    import io, sys, traceback, pickle, os, signal, codeop
+                    from types import ModuleType
 
                     class StreamingStdout(io.TextIOBase):
                         def __init__(self, qq):
@@ -1014,9 +995,6 @@ class Molten:
                     args=(expr, output_queue, ns["variables"], ns.get("import_lines", []), ns_path),
                 )
                 process.start()
-                self.current_eval_process = process
-                self.current_eval_pid = process.pid
-                self.current_eval_bufnr = bufnr
 
                 start_time = time.time()
                 last_update_time = start_time
@@ -1062,77 +1040,24 @@ class Molten:
                         except ProcessLookupError:
                             pass
                         process.join(timeout=1)
-                    self.current_eval_process = None
-                    self.current_eval_pid = None
-                    self.current_eval_bufnr = None
 
                 elapsed = max(0.0, time.time() - start_time)
-
-                # ---- Determine status (with traceback restoration) ----
-                if getattr(self, "eval_restarted", False):
-                    lines_so_far[0] = f"[{eval_id}][Kernel_Restarted] {elapsed:.2f} seconds..."
-                    code_lines = expr.splitlines()
-                    idx = len(code_lines)
-                    while idx > 0 and not code_lines[idx - 1].strip():
-                        idx -= 1
-                    if idx >= 1:
-                        user_lineno = idx
-                        code_line = code_lines[user_lineno - 1].strip()
-                    else:
-                        user_lineno = 1
-                        code_line = ""
-                    lines_so_far += [
-                        "-" * 75,
-                        "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                        f"Cell In[{eval_id}], line {user_lineno}",
-                        f"----> {user_lineno} {code_line}",
-                        "",
-                        "KeyboardInterrupt",
-                    ]
-                    self.eval_restarted = False
-
-                elif getattr(self, "eval_interrupted", False):
-                    lines_so_far[0] = f"[{eval_id}][Kernel_Interrupted] {elapsed:.2f} seconds..."
-                    code_lines = expr.splitlines()
-                    idx = len(code_lines)
-                    while idx > 0 and not code_lines[idx - 1].strip():
-                        idx -= 1
-                    if idx >= 1:
-                        user_lineno = idx
-                        code_line = code_lines[user_lineno - 1].strip()
-                    else:
-                        user_lineno = 1
-                        code_line = ""
-                    lines_so_far += [
-                        "-" * 75,
-                        "KeyboardInterrupt" + " " * 25 + "Traceback (most recent call last)",
-                        f"Cell In[{eval_id}], line {user_lineno}",
-                        f"----> {user_lineno} {code_line}",
-                        "",
-                        "KeyboardInterrupt",
-                    ]
-                    self.eval_interrupted = False
-
-                elif error_occurred:
-                    lines_so_far[0] = f"[{eval_id}][Error] {elapsed:.2f} seconds..."
-                else:
-                    lines_so_far[0] = f"[{eval_id}][Done] {elapsed:.2f} seconds..."
-
+                lines_so_far[0] = f"[{eval_id}][{'Error' if error_occurred else 'Done'}] {elapsed:.2f} seconds..."
                 update_output_block(lines_so_far.copy())
 
-                # ---- Final persist ----
                 try:
                     tmp = ns_path + ".tmp"
                     with open(tmp, "wb") as f:
                         pickle.dump(ns, f)
                     os.replace(tmp, ns_path)
-                except Exception as e:
+                except Exception:
                     pass
 
-            except Exception as e:
-                pass
+                self.eval_queue.task_done()
 
-            self.eval_queue.task_done()
+            except Exception:
+                continue
+
 
     def _restart_kernel(self):
         """Restart the entire Molten kernel environment and reset eval state."""
