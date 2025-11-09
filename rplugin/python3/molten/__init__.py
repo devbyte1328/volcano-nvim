@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from typing import Any, Dict, List, Optional, Tuple
 from itertools import chain
 
@@ -30,7 +29,7 @@ import multiprocessing
 import signal
 
 import io
-import pickle
+import json
 
 from types import ModuleType
 
@@ -757,13 +756,9 @@ class Molten:
             # If it's not shell command then it's python code
             else:
 
-                ### This code block is pointless, disabling for now...
-                '''
                 if self._is_output_block_under_current_element_block(buf, win, cursor_pos) == True:
                     buf.api.set_lines(0, -1, False, self._delete_output_block_elements(script_in_parts=buf[:], cursor_pos=cursor_pos, delete="Down", amount=1))
                 self._insert_output_block(buf, end_cell_block_element)
-                '''
-                ###
 
                 # Queue up async evaluation
                 self.eval_queue.put({
@@ -828,34 +823,33 @@ class Molten:
                             pass
                     self.nvim.async_call(_do_update)
 
-                # ---------- namespace setup ----------
                 ns_result = []
                 ns_ready = threading.Event()
 
-                def _compute_ns_path_on_main():
+                def _load_namespace():
                     try:
-                        fname = self.nvim.eval("expand('%:p')")
-                        if not fname:
-                            fname = f"buffer_{bufnr}"
-                        checkpoint_dir = os.path.dirname(fname)
-                        os.makedirs(checkpoint_dir, exist_ok=True)
-                        ns_path = os.path.join(checkpoint_dir, f"{os.path.basename(fname)}.pkl")
-                        if os.path.exists(ns_path):
+                        load_namespace = f"{self.nvim.eval('expand(\"%:p\")')}.json"
+
+                        if os.path.exists(load_namespace):
                             try:
-                                with open(ns_path, "rb") as f:
-                                    ns = pickle.load(f)
+                                with open(load_namespace, "r", encoding="utf-8") as f:
+                                    ns = json.load(f)
                             except Exception:
-                                ns = {"variables": {}, "import_lines": []}
+                                ns = {"variables": {}, "imports": []}
                         else:
-                            ns = {"variables": {}, "import_lines": []}
+                            ns = {"variables": {}, "imports": []}
+
                         self.global_namespaces[bufnr] = ns
-                        ns_result.append((ns_path, ns))
+
+                        ns_result.append((load_namespace, ns))
                     finally:
                         ns_ready.set()
 
-                self.nvim.async_call(_compute_ns_path_on_main)
+                self.nvim.async_call(_load_namespace)
+
                 ns_ready.wait()
-                ns_path, ns = ns_result[0]
+
+                load_namespace, ns = ns_result[0]
 
                 # ---------- evaluation ----------
                 lines_so_far = [f"[{eval_id}][*] 0.00 seconds..."]
@@ -867,7 +861,7 @@ class Molten:
 
                 output_queue = multiprocessing.Queue()
 
-                def run_eval(code, q, pre_vars, import_lines_initial, ns_path):
+                def run_eval(code, q, pre_vars, imports_initial, load_namespace):
                     import io, sys, traceback, pickle, os, signal, codeop
                     from types import ModuleType
 
@@ -887,7 +881,7 @@ class Molten:
                                 self.q.put(("line", self._buffer))
                                 self._buffer = ""
 
-                    def picklable_vars(globs, baseline_keys):
+                    def jsonable_vars(globs, baseline_keys):
                         out = {}
                         for k, v in globs.items():
                             if k in baseline_keys or k.startswith("__"):
@@ -895,7 +889,7 @@ class Molten:
                             if isinstance(v, ModuleType):
                                 continue
                             try:
-                                pickle.dumps(v)
+                                json.dumps(v)
                             except Exception:
                                 continue
                             out[k] = v
@@ -909,17 +903,17 @@ class Molten:
                                 imps.append(s)
                         return imps
 
-                    def atomic_pickle_write(path, payload):
+                    def atomic_json_write(path, payload):
                         tmp = path + ".tmp"
-                        with open(tmp, "wb") as f:
-                            pickle.dump(payload, f)
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            json.dump(payload, f, indent=2, ensure_ascii=False)
                         os.replace(tmp, path)
 
                     error_happened = False
                     globs = {}
                     globs.update(pre_vars)
 
-                    imports_live = list(import_lines_initial) if import_lines_initial else []
+                    imports_live = list(imports_initial) if imports_initial else []
                     for imp in imports_live:
                         try:
                             exec(imp, globs)
@@ -966,24 +960,27 @@ class Molten:
                             for imp in new_imps:
                                 if imp not in imports_live:
                                     imports_live.append(imp)
-                            new_vars = picklable_vars(globs, baseline_keys)
+                            new_vars = jsonable_vars(globs, baseline_keys)
                             baseline_keys = set(globs.keys())
                             q.put(("globals", (new_vars, new_imps)))
 
                             try:
-                                if os.path.exists(ns_path):
+                                if os.path.exists(load_namespace):
                                     try:
-                                        with open(ns_path, "rb") as f:
-                                            ns_disk = pickle.load(f)
+                                        with open(load_namespace, "r", encoding="utf-8") as f:
+                                            ns_disk = json.load(f)
                                     except Exception:
-                                        ns_disk = {"variables": {}, "import_lines": []}
+                                        ns_disk = {"variables": {}, "imports": []}
                                 else:
-                                    ns_disk = {"variables": {}, "import_lines": []}
+                                    ns_disk = {"variables": {}, "imports": []}
+
                                 ns_disk["variables"].update(new_vars)
                                 for imp in imports_live:
-                                    if imp not in ns_disk.get("import_lines", []):
-                                        ns_disk.setdefault("import_lines", []).append(imp)
-                                atomic_pickle_write(ns_path, ns_disk)
+                                    if imp not in ns_disk.get("imports", []):
+                                        ns_disk.setdefault("imports", []).append(imp)
+
+                                atomic_json_write(load_namespace, ns_disk)
+
                             except Exception as _e:
                                 q.put(("line", f"[persist warning] {type(_e).__name__}: {_e}"))
 
@@ -996,7 +993,7 @@ class Molten:
 
                 process = multiprocessing.Process(
                     target=run_eval,
-                    args=(expr, output_queue, ns["variables"], ns.get("import_lines", []), ns_path),
+                    args=(expr, output_queue, ns["variables"], ns.get("imports", []), load_namespace),
                 )
                 process.start()
 
@@ -1021,8 +1018,8 @@ class Molten:
                                 new_vars, new_imports = payload
                                 ns["variables"].update(new_vars)
                                 for imp in new_imports:
-                                    if imp not in ns.setdefault("import_lines", []):
-                                        ns["import_lines"].append(imp)
+                                    if imp not in ns.setdefault("imports", []):
+                                        ns["imports"].append(imp)
                             elif kind == "done":
                                 saw_done = True
                                 error_occurred = bool(payload)
@@ -1050,10 +1047,10 @@ class Molten:
                 update_output_block(lines_so_far.copy())
 
                 try:
-                    tmp = ns_path + ".tmp"
-                    with open(tmp, "wb") as f:
-                        pickle.dump(ns, f)
-                    os.replace(tmp, ns_path)
+                    tmp = load_namespace + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(ns, f, indent=2, ensure_ascii=False)
+                    os.replace(tmp, load_namespace)
                 except Exception:
                     pass
 
