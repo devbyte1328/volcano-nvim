@@ -1,10 +1,6 @@
-# Volcano
+# Volcano - Neovim plugin for running code interactively with the Jupyter kernel.
 
-Neovim plugin for running code interactively with the Jupyter kernel.
-
-# This project is a *work in progress*.
-
-## The following is for development.
+# This project is a work in progress. this README is currently for development purposes:
 
 ### 🌐 Live Version
 Create '~/.config/nvim/lua/plugins/volcano.lua':
